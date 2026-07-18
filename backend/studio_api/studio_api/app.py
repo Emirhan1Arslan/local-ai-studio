@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from studio_core import __version__ as core_version
+from studio_core.assets import register_asset_for_job
 from studio_core.config import get_settings
 from studio_core.hardware import SystemInfo, get_system_info
 from studio_core.logging import get_logger, setup_logging
@@ -23,9 +24,11 @@ from studio_models.scanner import scan
 from studio_models.watcher import ModelWatcher
 
 from studio_api.bus import bus
+from studio_api.routes.assets import router as assets_router
 from studio_api.routes.downloads import router as downloads_router
 from studio_api.routes.jobs import router as jobs_router
 from studio_api.routes.models import router as models_router
+from studio_api.routes.projects import router as projects_router
 
 log = get_logger("studio_api")
 
@@ -78,6 +81,7 @@ def create_app() -> FastAPI:
         watcher.start()
         scheduler._concurrency = settings.worker_concurrency
         scheduler.set_emit(bus.emit)
+        scheduler.set_on_done(register_asset_for_job)
         await scheduler.start()
         telemetry = TelemetryService(bus.emit, settings.telemetry_interval)
         telemetry.start()
@@ -102,6 +106,8 @@ def create_app() -> FastAPI:
     app.include_router(models_router, dependencies=[Depends(_check_token)])
     app.include_router(downloads_router, dependencies=[Depends(_check_token)])
     app.include_router(jobs_router, dependencies=[Depends(_check_token)])
+    app.include_router(projects_router, dependencies=[Depends(_check_token)])
+    app.include_router(assets_router, dependencies=[Depends(_check_token)])
     # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
 

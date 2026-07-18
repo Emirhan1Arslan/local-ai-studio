@@ -42,6 +42,7 @@ def _a1111_metadata(params: dict, seed: int) -> str:
 class SdxlAdapter:
     def __init__(self) -> None:
         self._pipe = None
+        self._model_path = ""
 
     def load(self, model_path: str, **kwargs: Any) -> None:
         try:
@@ -62,6 +63,7 @@ class SdxlAdapter:
         if use_cuda:
             pipe.to("cuda")
         self._pipe = pipe
+        self._model_path = str(model_path)
 
     def infer(self, params: dict) -> Iterator[dict]:
         model_path = params.get("model_path", "")
@@ -71,8 +73,11 @@ class SdxlAdapter:
         if not output_path:
             raise RuntimeError("output_path gerekli")
 
-        yield {"event": "progress", "value": 0.0, "message": "model yükleniyor…"}
+        # Kalıcı worker: model komutlar arasında bellekte kalır; yol değişirse takas edilir.
+        if self._pipe is not None and self._model_path != str(model_path):
+            self.unload()
         if self._pipe is None:
+            yield {"event": "progress", "value": 0.0, "message": "model yükleniyor…"}
             self.load(model_path)
 
         import torch
@@ -143,6 +148,7 @@ class SdxlAdapter:
         if self._pipe is not None:
             del self._pipe
             self._pipe = None
+            self._model_path = ""
             try:
                 import torch
 

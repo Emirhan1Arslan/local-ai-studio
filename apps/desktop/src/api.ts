@@ -103,6 +103,31 @@ export async function jobAction(
   return (await r.json()).ok;
 }
 
+export interface AssetInfo {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  kind: string;
+  role: string;
+  path: string;
+  meta: { params?: Record<string, unknown>; [k: string]: unknown };
+  created_at: string;
+}
+
+export async function fetchAssets(kind?: string, limit = 24): Promise<AssetInfo[]> {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (kind) q.set("kind", kind);
+  const r = await fetch(`/v1/assets?${q}`);
+  if (!r.ok) throw new Error(`assets ${r.status}`);
+  return r.json();
+}
+
+export async function regenerateAsset(id: string): Promise<{ job_id: string }> {
+  const r = await fetch(`/v1/assets/${id}/regenerate`, { method: "POST" });
+  if (!r.ok) throw new Error(`regenerate ${r.status}`);
+  return r.json();
+}
+
 export interface GpuTelemetry {
   index: number;
   name: string;

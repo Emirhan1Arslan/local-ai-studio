@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # İş türü → worker Python yolu override'ı (JSON: STUDIO_WORKER_PYTHONS)
     # Boşsa ~/LocalAIStudio/envs/<tür> venv'i, o da yoksa ana venv kullanılır.
     worker_pythons: dict[str, str] = {}
+    # Boştaki worker'ın (ve yüklü modelinin) bellekte kalma süresi (sn)
+    worker_idle_timeout: float = 300.0
 
     @property
     def models_dir(self) -> Path:

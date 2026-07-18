@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createJob, fetchJobs, fetchModels, type JobInfo, type ModelInfo } from "../api";
+import { useEffect, useRef, useState } from "react";
+import {
+  createJob,
+  fetchAssets,
+  fetchJobs,
+  fetchModels,
+  regenerateAsset,
+  type AssetInfo,
+  type JobInfo,
+  type ModelInfo,
+} from "../api";
 import { useStudio } from "../state";
 
-function outputUrl(job: JobInfo): string | null {
-  const p = job.result?.path as string | undefined;
-  if (!p) return null;
-  return `/outputs/${p.split(/[\\/]/).pop()}`;
+function assetUrl(a: AssetInfo): string {
+  return `/outputs/${a.path.split(/[\\/]/).pop()}`;
 }
 
 export default function GeneratePanel() {
@@ -19,12 +26,15 @@ export default function GeneratePanel() {
   const [cfg, setCfg] = useState(7);
   const [seed, setSeed] = useState(-1);
   const [imageJobs, setImageJobs] = useState<JobInfo[]>([]);
+  const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, { value: number; message: string }>>({});
   const [formError, setFormError] = useState("");
   const lastEvent = useRef(0);
 
-  const refreshJobs = () =>
+  const refreshJobs = () => {
     fetchJobs().then((all) => setImageJobs(all.filter((j) => j.kind === "image"))).catch(() => undefined);
+    fetchAssets("image").then(setAssets).catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!connected) return;
@@ -58,10 +68,6 @@ export default function GeneratePanel() {
   }, [events]);
 
   const running = imageJobs.find((j) => j.status === "running" || j.status === "queued");
-  const gallery = useMemo(
-    () => imageJobs.filter((j) => j.status === "done" && outputUrl(j)).slice(0, 12),
-    [imageJobs],
-  );
 
   const generate = async (ev: React.FormEvent) => {
     ev.preventDefault();
@@ -165,16 +171,27 @@ export default function GeneratePanel() {
       )}
 
       <div className="gallery">
-        {gallery.map((j) => {
-          const url = outputUrl(j)!;
+        {assets.map((a) => {
+          const url = assetUrl(a);
+          const prompt = String(a.meta.params?.prompt ?? "");
           return (
-            <a key={j.id} href={url} target="_blank" rel="noreferrer" title={String(j.params.prompt ?? "")}>
-              <img src={url} alt="" loading="lazy" />
-            </a>
+            <figure key={a.id} className="gallery-item">
+              <a href={url} target="_blank" rel="noreferrer" title={prompt}>
+                <img src={url} alt="" loading="lazy" />
+              </a>
+              <button
+                className="regen"
+                title="Aynı parametrelerle yeniden üret"
+                onClick={() => regenerateAsset(a.id).then(refreshJobs).catch(() => undefined)}
+                disabled={!!running}
+              >
+                ↻ yeniden üret
+              </button>
+            </figure>
           );
         })}
       </div>
-      {gallery.length === 0 && !running && (
+      {assets.length === 0 && !running && (
         <p className="muted">Henüz üretim yok. Bir checkpoint seçip prompt yazın.</p>
       )}
     </div>

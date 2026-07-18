@@ -32,7 +32,10 @@ class DummyAdapter:
                 "value": (i + 1) / steps,
                 "message": f"adım {i + 1}/{steps}",
             }
-        yield {"event": "done", "result": {"steps": steps}}
+        result = {"steps": steps}
+        if params.get("result_path"):  # asset kaydı testleri için sahte çıktı yolu
+            result["path"] = params["result_path"]
+        yield {"event": "done", "result": result}
 
     def unload(self) -> None:
         pass
