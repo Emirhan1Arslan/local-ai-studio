@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from studio_core.config import get_settings
 from studio_core.db import session_scope
 from studio_core.models import Job, JobStatus
 from studio_inference.adapters import available_kinds
@@ -48,6 +50,12 @@ async def create_job(req: JobRequest) -> JobOut:
         from studio_api.app import ApiError
 
         raise ApiError(400, "bad_request", f"bilinmeyen iş türü: {req.kind!r}")
+
+    # Görüntü işleri çıktıyı outputs/ altına yazar (Faz 4 proje sistemi bunu asset'e bağlayacak)
+    if req.kind == "image" and not req.params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        req.params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")
 
     def _create() -> str:
         with session_scope() as session:

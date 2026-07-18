@@ -12,6 +12,10 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      "/outputs": {
+        target: "http://127.0.0.1:8710",
+        changeOrigin: true,
+      },
     },
   },
 });

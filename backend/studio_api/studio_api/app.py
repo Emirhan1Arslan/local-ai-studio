@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from studio_core import __version__ as core_version
 from studio_core.config import get_settings
@@ -101,6 +102,8 @@ def create_app() -> FastAPI:
     app.include_router(models_router, dependencies=[Depends(_check_token)])
     app.include_router(downloads_router, dependencies=[Depends(_check_token)])
     app.include_router(jobs_router, dependencies=[Depends(_check_token)])
+    # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
+    app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
 
     app.add_middleware(
         CORSMiddleware,

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     telemetry_interval: float = 2.0
     # Aynı anda çalışacak worker sayısı (Faz 3'te cihaz başına 1)
     worker_concurrency: int = 1
+    # İş türü → worker Python yolu override'ı (JSON: STUDIO_WORKER_PYTHONS)
+    # Boşsa ~/LocalAIStudio/envs/<tür> venv'i, o da yoksa ana venv kullanılır.
+    worker_pythons: dict[str, str] = {}
 
     @property
     def models_dir(self) -> Path:
@@ -68,6 +71,10 @@ class Settings(BaseSettings):
         return self.data_dir / "envs"
 
     @property
+    def outputs_dir(self) -> Path:
+        return self.data_dir / "outputs"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "studio.db"
 
@@ -80,6 +87,7 @@ class Settings(BaseSettings):
             self.logs_dir,
             self.plugins_dir,
             self.envs_dir,
+            self.outputs_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
         for sub in MODEL_SUBDIRS:

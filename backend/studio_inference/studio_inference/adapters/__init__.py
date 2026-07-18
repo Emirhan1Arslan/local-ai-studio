@@ -1,25 +1,34 @@
-"""Adapter kayıt defteri: iş türü → EngineAdapter (ADR-0009, engine-agnostic ilke)."""
+"""Adapter kayıt defteri: iş türü → EngineAdapter (ADR-0009, engine-agnostic ilke).
+
+Kayıtlar noktalı yol olarak tutulur ve İHTİYAÇ ANINDA import edilir: torch/diffusers
+yalnızca worker sürecinde yüklenir, API süreci hafif kalır (ADR-0013 slim çekirdek).
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import importlib
 
 from studio_inference.adapters.base import EngineAdapter
-from studio_inference.adapters.dummy import DummyAdapter
 
-_REGISTRY: dict[str, Callable[[], EngineAdapter]] = {
-    "dummy": DummyAdapter,
+_REGISTRY: dict[str, str] = {
+    "dummy": "studio_inference.adapters.dummy:DummyAdapter",
+    "image": "studio_inference.adapters.sdxl:SdxlAdapter",
 }
 
 
 def get_adapter(kind: str) -> EngineAdapter | None:
-    factory = _REGISTRY.get(kind)
-    return factory() if factory else None
+    spec = _REGISTRY.get(kind)
+    if spec is None:
+        return None
+    module_name, _, class_name = spec.partition(":")
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name)()
 
 
 def available_kinds() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def register(kind: str, factory: Callable[[], EngineAdapter]) -> None:
-    _REGISTRY[kind] = factory
+def register(kind: str, spec: str) -> None:
+    """spec: 'paket.modul:SinifAdi' — plugin'ler (Faz 13) bu kancayı kullanacak."""
+    _REGISTRY[kind] = spec

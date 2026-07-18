@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
+from studio_core.config import get_settings
 from studio_core.db import session_scope
 from studio_core.logging import get_logger
 from studio_core.models import Job, JobStatus
@@ -23,9 +26,29 @@ log = get_logger("studio_inference.scheduler")
 
 EmitFn = Callable[..., None]
 
+# Worker'ın studio_inference'ı kaynaktan import edebilmesi için (kurulum gerektirmez)
+_SRC_DIR = str(Path(__file__).resolve().parent.parent)
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def worker_python(kind: str) -> str:
+    """İş türüne göre worker yorumlayıcısı (ADR-0005 izole env stratejisi).
+
+    Sıra: STUDIO_WORKER_PYTHONS override → ~/LocalAIStudio/envs/<kind> venv'i →
+    ana venv (sys.executable). Mevcut sistem ortamlarına asla dokunulmaz.
+    """
+    settings = get_settings()
+    override = settings.worker_pythons.get(kind, "")
+    if override:
+        return override
+    sub = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    candidate = settings.envs_dir / kind / sub
+    if candidate.exists():
+        return str(candidate)
+    return sys.executable
 
 
 class _WorkerHandle:
@@ -129,14 +152,20 @@ class Scheduler:
         self._emit("job.started", id=job_id, kind=kind)
         log.info("job_started", id=job_id, kind=kind)
 
+        child_env = dict(os.environ)
+        child_env["PYTHONPATH"] = _SRC_DIR + (
+            os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
+        )
+        child_env["PYTHONIOENCODING"] = "utf-8"
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
+            worker_python(kind),
             "-u",
             "-m",
             "studio_inference.worker",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=child_env,
         )
         handle = _WorkerHandle(proc)
         self._running[job_id] = handle
