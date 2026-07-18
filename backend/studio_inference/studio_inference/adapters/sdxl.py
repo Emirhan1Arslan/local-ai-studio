@@ -191,6 +191,17 @@ def _latent_preview_jpeg(latents: Any) -> str | None:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _controlnet_source(path_or_repo: str) -> str:
+    """ControlNet kaynağını çözer: Model Browser diffusers klasöründeki safetensors
+    dosyasını kaydeder; yanında config.json varsa klasörden (from_pretrained) yüklenir."""
+    p = str(path_or_repo)
+    if p.endswith(".safetensors"):
+        parent = os.path.dirname(p)
+        if parent and os.path.exists(os.path.join(parent, "config.json")):
+            return parent
+    return p
+
+
 def _control_image(spec: dict, size: tuple):
     """ControlNet koşul görselini hazırlar (none: olduğu gibi, canny: kenar çıkarımı)."""
     from PIL import Image
@@ -286,10 +297,11 @@ class SdxlAdapter:
                 raise RuntimeError("controlnet 'model' alanı gerekli (yol ya da HF repo id)")
             cn = self._controlnets.get(key)
             if cn is None:
-                if key.endswith(".safetensors"):
-                    cn = ControlNetModel.from_single_file(key, torch_dtype=dtype)
+                src = _controlnet_source(key)
+                if src.endswith(".safetensors"):
+                    cn = ControlNetModel.from_single_file(src, torch_dtype=dtype)
                 else:
-                    cn = ControlNetModel.from_pretrained(key, torch_dtype=dtype)
+                    cn = ControlNetModel.from_pretrained(src, torch_dtype=dtype)
                 if use_cuda:
                     cn.to("cuda")
             new_cache[key] = cn

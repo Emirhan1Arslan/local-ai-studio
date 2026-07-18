@@ -155,8 +155,13 @@ def extract(path: Path, models_root: Path) -> dict[str, Any]:
             family = str(meta["metadata"].get("general.architecture", ""))
     except (ValueError, OSError, json.JSONDecodeError, struct.error) as exc:
         meta = {"error": f"metadata okunamadı: {exc}"}
+    name = path.stem
+    # diffusers klasör düzeni (config.json + diffusion_pytorch_model.safetensors):
+    # anlamlı ad dosyada değil klasördedir
+    if name.startswith("diffusion_pytorch_model") and path.parent != models_root:
+        name = path.parent.name
     return {
-        "name": path.stem,
+        "name": name,
         "family": family,
         "kind": classify(path, models_root),
         "format": fmt,

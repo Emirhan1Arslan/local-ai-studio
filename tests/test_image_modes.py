@@ -12,6 +12,7 @@ from fakes import write_fake_safetensors
 from studio_inference.adapters.sdxl import (
     _a1111_metadata,
     _align,
+    _controlnet_source,
     _detect_family,
     _expand_canvas,
 )
@@ -90,6 +91,39 @@ def test_a1111_metadata_default_has_no_sampler_line():
     text = _a1111_metadata({"prompt": "x", "model_path": "m.safetensors"}, seed=1)
     assert "Sampler:" not in text
     assert "Denoising strength" not in text
+
+
+def test_controlnet_source_resolves_diffusers_dir(tmp_path):
+    """Model Browser diffusers klasöründeki safetensors'u kaydeder; config.json
+    yanındaysa yükleme klasörden yapılır (from_pretrained)."""
+    d = tmp_path / "canny-sdxl"
+    d.mkdir()
+    f = d / "diffusion_pytorch_model.safetensors"
+    f.write_bytes(b"x")
+    (d / "config.json").write_text("{}", encoding="utf-8")
+    assert _controlnet_source(str(f)) == str(d)
+    # yalnız dosya (orijinal tek dosya checkpoint) → olduğu gibi
+    lone = tmp_path / "tek.safetensors"
+    lone.write_bytes(b"x")
+    assert _controlnet_source(str(lone)) == str(lone)
+    # HF repo id → olduğu gibi
+    assert (
+        _controlnet_source("diffusers/controlnet-canny-sdxl-1.0")
+        == "diffusers/controlnet-canny-sdxl-1.0"
+    )
+
+
+def test_extract_names_diffusers_dir_after_folder(tmp_path):
+    from studio_models.metadata import extract
+
+    root = tmp_path / "models"
+    sub = root / "controlnet" / "canny-sdxl"
+    sub.mkdir(parents=True)
+    p = sub / "diffusion_pytorch_model.safetensors"
+    write_fake_safetensors(p)
+    data = extract(p, root)
+    assert data["name"] == "canny-sdxl"  # ad dosyadan değil klasörden
+    assert data["kind"] == "controlnet"
 
 
 def test_asset_parent_link(client, tmp_path):

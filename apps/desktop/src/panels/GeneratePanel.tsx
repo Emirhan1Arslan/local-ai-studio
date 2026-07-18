@@ -151,7 +151,9 @@ export default function GeneratePanel() {
   const [init, setInit] = useState<InitPick | null>(null);
   const [strength, setStrength] = useState(0.75);
   const [op, setOp] = useState({ left: 0, right: 256, top: 0, bottom: 0 });
-  const [cnModel, setCnModel] = useState("");
+  const [cnModels, setCnModels] = useState<ModelInfo[]>([]);
+  const [cnPick, setCnPick] = useState(""); // "" kapalı · model yolu · "__custom"
+  const [cnModel, setCnModel] = useState(""); // elle girilen yol / HF repo id
   const [cnImage, setCnImage] = useState<{ path: string; name: string } | null>(null);
   const [cnPrep, setCnPrep] = useState("canny");
   const [cnScale, setCnScale] = useState(0.8);
@@ -182,6 +184,7 @@ export default function GeneratePanel() {
         setModels(cands);
         if (cands.length > 0 && !modelPath) setModelPath(cands[0].path);
         setLoraModels(all.filter((m) => m.kind === "lora" && m.format === "safetensors"));
+        setCnModels(all.filter((m) => m.kind === "controlnet" && m.format === "safetensors"));
       })
       .catch(() => setModels([]));
     refreshJobs();
@@ -292,9 +295,10 @@ export default function GeneratePanel() {
         params.mask_image = up.path;
       }
       if (mode === "outpaint") params.outpaint = { ...op };
-      if (mode === "txt2img" && cnModel && cnImage) {
+      const cnEffective = cnPick === "__custom" ? cnModel.trim() : cnPick;
+      if (mode === "txt2img" && cnEffective && cnImage) {
         params.controlnets = [
-          { model: cnModel, image: cnImage.path, scale: cnScale, preprocess: cnPrep },
+          { model: cnEffective, image: cnImage.path, scale: cnScale, preprocess: cnPrep },
         ];
       }
       if (mode === "txt2img" && ipImage) {
@@ -500,44 +504,59 @@ export default function GeneratePanel() {
           {mode === "txt2img" && (
             <>
               <div className="dl-row">
-                <input
-                  type="text"
-                  placeholder="ControlNet: model yolu ya da HF repo (ör. diffusers/controlnet-canny-sdxl-1.0)"
-                  value={cnModel}
-                  onChange={(e) => setCnModel(e.target.value)}
-                />
-                <select value={cnPrep} onChange={(e) => setCnPrep(e.target.value)}>
-                  <option value="canny">canny çıkar</option>
-                  <option value="none">hazır koşul görseli</option>
+                <select value={cnPick} onChange={(e) => setCnPick(e.target.value)}>
+                  <option value="">ControlNet yok</option>
+                  {cnModels.map((m) => (
+                    <option key={m.id} value={m.path}>
+                      {m.name}
+                    </option>
+                  ))}
+                  <option value="__custom">elle gir…</option>
                 </select>
-                <label className="gen-num">
-                  etki{" "}
+                {cnPick === "__custom" && (
                   <input
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={cnScale}
-                    onChange={(e) => setCnScale(Number(e.target.value))}
+                    type="text"
+                    placeholder="model yolu ya da HF repo (ör. diffusers/controlnet-canny-sdxl-1.0)"
+                    value={cnModel}
+                    onChange={(e) => setCnModel(e.target.value)}
                   />
-                </label>
-                <label className="file-pick">
-                  {cnImage ? cnImage.name : "koşul görseli…"}
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      try {
-                        const up = await uploadImageFile(f);
-                        setCnImage({ path: up.path, name: f.name });
-                      } catch (err) {
-                        setFormError(err instanceof Error ? err.message : String(err));
-                      }
-                    }}
-                  />
-                </label>
+                )}
+                {cnPick !== "" && (
+                  <>
+                    <select value={cnPrep} onChange={(e) => setCnPrep(e.target.value)}>
+                      <option value="canny">canny çıkar</option>
+                      <option value="none">hazır koşul görseli</option>
+                    </select>
+                    <label className="gen-num">
+                      etki{" "}
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        value={cnScale}
+                        onChange={(e) => setCnScale(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="file-pick">
+                      {cnImage ? cnImage.name : "koşul görseli…"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          try {
+                            const up = await uploadImageFile(f);
+                            setCnImage({ path: up.path, name: f.name });
+                          } catch (err) {
+                            setFormError(err instanceof Error ? err.message : String(err));
+                          }
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
               </div>
               <div className="dl-row">
                 <label className="file-pick">
