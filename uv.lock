@@ -832,12 +832,14 @@ name = "studio-models"
 version = "0.1.0"
 source = { editable = "backend/studio_models" }
 dependencies = [
+    { name = "httpx" },
     { name = "studio-core" },
     { name = "watchdog" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "studio-core", editable = "backend/studio_core" },
     { name = "watchdog", specifier = ">=4.0" },
 ]

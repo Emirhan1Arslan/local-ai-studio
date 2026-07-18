@@ -72,3 +72,36 @@ table.models th { color: var(--muted); font-weight: 600; }
 .fmt-safetensors { color: var(--ok); border-color: var(--ok); }
 .fmt-gguf { color: var(--accent); border-color: var(--accent); }
 .fmt-pickle { color: var(--err); border-color: var(--err); }
+
+/* İndirmeler paneli */
+.dl-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.dl-row { display: flex; gap: 10px; align-items: center; }
+.dl-form input[type="text"], .dl-form input:not([type]), .dl-form select {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; flex: 1; font-size: 13px;
+}
+.dl-form select { flex: 0 0 auto; }
+.dl-form button {
+  background: var(--accent); color: #0b0d10; border: 0;
+  padding: 6px 16px; border-radius: 6px; font-weight: 600; cursor: pointer;
+}
+.dl-form button:disabled { opacity: 0.5; cursor: default; }
+
+.dl-list { display: flex; flex-direction: column; gap: 10px; }
+.dl-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.dl-head { display: flex; align-items: center; gap: 10px; }
+.dl-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-actions { margin-left: auto; display: flex; gap: 6px; }
+.dl-actions button {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 2px 8px; cursor: pointer;
+}
+.dl-bar { height: 6px; background: var(--bg); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+.dl-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+
+.st-done { color: var(--ok); border-color: var(--ok); }
+.st-failed, .st-canceled { color: var(--err); border-color: var(--err); }
+.st-downloading { color: var(--accent); border-color: var(--accent); }
+.err-text { color: var(--err); font-size: 12px; margin: 6px 0 0; }

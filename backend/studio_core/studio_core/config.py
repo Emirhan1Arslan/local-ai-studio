@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Sidecar başlatırken Tauri tarafından üretilir; boşsa auth kapalıdır (yalnız dev).
     api_token: str = ""
     log_level: str = "INFO"
+    # Kapalı/lisans onaylı HF repoları için (STUDIO_HF_TOKEN); asla loglanmaz.
+    hf_token: str = ""
 
     @property
     def models_dir(self) -> Path:

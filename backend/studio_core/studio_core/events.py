@@ -24,6 +24,8 @@ EventTopic = Literal[
     "download.progress",
     "download.done",
     "download.failed",
+    "download.paused",
+    "download.canceled",
     "model.added",
     "model.removed",
     "model.updated",

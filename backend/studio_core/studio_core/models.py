@@ -81,6 +81,37 @@ class ModelRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class DownloadStatus(enum.StrEnum):
+    QUEUED = "queued"
+    DOWNLOADING = "downloading"
+    PAUSED = "paused"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
+class Download(Base):
+    """İndirme kaydı: süreç yeniden başlasa da .part dosyasından sürdürülebilir."""
+
+    __tablename__ = "downloads"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    url: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16), default="url")  # url/hf/civitai
+    dest_path: Mapped[str] = mapped_column(Text)
+    status: Mapped[DownloadStatus] = mapped_column(
+        Enum(DownloadStatus, values_callable=lambda e: [m.value for m in e]),
+        default=DownloadStatus.QUEUED,
+    )
+    total_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    downloaded_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    sha256_expected: Mapped[str] = mapped_column(String(64), default="")
+    sha256_actual: Mapped[str] = mapped_column(String(64), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class JobStatus(enum.StrEnum):
     QUEUED = "queued"
     RUNNING = "running"

@@ -56,6 +56,58 @@ export async function rescanModels(): Promise<{ added: number; removed: number; 
   return r.json();
 }
 
+export interface DownloadInfo {
+  id: string;
+  url: string;
+  source: string;
+  dest_path: string;
+  status: string;
+  total_bytes: number;
+  downloaded_bytes: number;
+  sha256_expected: string;
+  sha256_actual: string;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface DownloadRequest {
+  url?: string;
+  repo_id?: string;
+  filename?: string;
+  revision?: string;
+  subdir: string;
+  sha256?: string;
+}
+
+export async function fetchDownloads(): Promise<DownloadInfo[]> {
+  const r = await fetch("/v1/downloads");
+  if (!r.ok) throw new Error(`downloads ${r.status}`);
+  return r.json();
+}
+
+export async function createDownload(req: DownloadRequest): Promise<DownloadInfo> {
+  const r = await fetch("/v1/downloads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `download ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function downloadAction(
+  id: string,
+  action: "pause" | "resume" | "cancel",
+): Promise<boolean> {
+  const r = await fetch(`/v1/downloads/${id}/${action}`, { method: "POST" });
+  if (!r.ok) return false;
+  return (await r.json()).ok;
+}
+
 export async function fetchSystemInfo(): Promise<SystemInfo> {
   const r = await fetch("/v1/system/info");
   if (!r.ok) throw new Error(`system/info ${r.status}`);

@@ -7,6 +7,7 @@ import {
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import ConsolePanel from "./panels/ConsolePanel";
+import DownloadsPanel from "./panels/DownloadsPanel";
 import ModelsPanel from "./panels/ModelsPanel";
 import SystemPanel from "./panels/SystemPanel";
 import { useStudio } from "./state";
@@ -17,6 +18,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   system: SystemPanel,
   console: ConsolePanel,
   models: ModelsPanel,
+  downloads: DownloadsPanel,
 };
 
 function addDefaultPanels(api: DockviewApi) {
@@ -28,11 +30,29 @@ function addDefaultPanels(api: DockviewApi) {
     position: { referencePanel: "system", direction: "right" },
   });
   api.addPanel({
+    id: "downloads",
+    component: "downloads",
+    title: "İndirmeler",
+    position: { referencePanel: "models", direction: "within" },
+  });
+  api.addPanel({
     id: "console",
     component: "console",
     title: "Console",
     position: { referencePanel: "system", direction: "below" },
   });
+}
+
+/** Kayıtlı yerleşim eski sürümden kalmışsa sonradan eklenen panelleri tamamla. */
+function ensurePanels(api: DockviewApi) {
+  if (!api.getPanel("downloads")) {
+    api.addPanel({
+      id: "downloads",
+      component: "downloads",
+      title: "İndirmeler",
+      position: api.getPanel("models") ? { referencePanel: "models", direction: "within" } : undefined,
+    });
+  }
 }
 
 function onReady(event: DockviewReadyEvent) {
@@ -48,6 +68,7 @@ function onReady(event: DockviewReadyEvent) {
     }
   }
   if (!restored || api.panels.length === 0) addDefaultPanels(api);
+  else ensurePanels(api);
   api.onDidLayoutChange(() => {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(api.toJSON()));
   });
