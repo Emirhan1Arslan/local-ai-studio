@@ -52,7 +52,14 @@ uv run pytest
 
 ## Durum
 
-Faz 0–1 (walking skeleton) sürüyor. Yol haritası ve kilometre taşları için [plan.md](plan.md).
+- **Faz 0 tamam:** monorepo, 15 ADR, CI iskeleti, lisans/OSS hijyeni.
+- **Faz 1 çekirdeği tamam:** FastAPI `/v1` + WS olay veriyolu + SQLite/Alembic + donanım
+  algılama + dockview'lu React UI; Tauri kabuk iskeleti (sidecar spawn + token el sıkışması).
+- **Faz 2 çekirdeği tamam:** model dizini tarayıcı (safetensors/GGUF metadata), registry,
+  watchdog ile restart'sız canlı algılama, `/v1/models` + Model Browser paneli.
+- Sırada: indirme motoru (HF/CivitAI), Faz 3 Job/Scheduler/Worker mimarisi.
+
+Yol haritası ve kilometre taşları için [plan.md](plan.md).
 
 ## Lisans
 

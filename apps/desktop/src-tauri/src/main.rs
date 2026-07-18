@@ -70,7 +70,8 @@ fn main() {
             if let RunEvent::Exit = event {
                 // Süreç sızıntısı olmaması Faz 1 DoD'sidir.
                 let state: State<Sidecar> = app.state();
-                if let Some(mut child) = state.child.lock().unwrap().take() {
+                let child = state.child.lock().unwrap().take();
+                if let Some(mut child) = child {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
