@@ -7,11 +7,12 @@ import struct
 from pathlib import Path
 
 
-def write_fake_safetensors(path: Path, metadata: dict | None = None) -> None:
-    header = {
-        "__metadata__": metadata or {"ss_network_module": "networks.lora"},
-        "weight": {"dtype": "F16", "shape": [2], "data_offsets": [0, 4]},
-    }
+def write_fake_safetensors(
+    path: Path, metadata: dict | None = None, tensor_names: list[str] | None = None
+) -> None:
+    header: dict = {"__metadata__": metadata or {"ss_network_module": "networks.lora"}}
+    for name in tensor_names or ["weight"]:
+        header[name] = {"dtype": "F16", "shape": [2], "data_offsets": [0, 4]}
     blob = json.dumps(header).encode()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:

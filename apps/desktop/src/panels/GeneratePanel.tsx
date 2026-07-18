@@ -6,6 +6,8 @@ import {
   fetchJobs,
   fetchModels,
   regenerateAsset,
+  uploadDataUrl,
+  uploadImageFile,
   type AssetInfo,
   type JobInfo,
   type ModelInfo,
@@ -18,8 +20,114 @@ interface LoraPick {
   weight: number;
 }
 
+interface InitPick {
+  path: string; // backend dosya yolu (iş parametresi)
+  url: string; // tarayıcı önizleme URL'i
+  assetId?: string; // galeriden geldiyse: Asset Graph parent bağı
+}
+
+type Mode = "txt2img" | "img2img" | "inpaint" | "outpaint";
+
+const MODE_LABELS: Record<Mode, string> = {
+  txt2img: "metin→görsel",
+  img2img: "görsel→görsel",
+  inpaint: "inpaint",
+  outpaint: "outpaint",
+};
+
+const SAMPLERS: [string, string][] = [
+  ["", "sampler: model varsayılanı"],
+  ["euler", "Euler"],
+  ["euler_a", "Euler a"],
+  ["dpmpp_2m", "DPM++ 2M"],
+  ["dpmpp_2m_karras", "DPM++ 2M Karras"],
+  ["dpmpp_sde_karras", "DPM++ SDE Karras"],
+  ["unipc", "UniPC"],
+  ["ddim", "DDIM"],
+  ["heun", "Heun"],
+  ["lms", "LMS"],
+];
+
 function assetUrl(a: AssetInfo): string {
   return `/outputs/${a.path.split(/[\\/]/).pop()}`;
+}
+
+const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8));
+
+function MaskEditor({
+  src,
+  canvasRef,
+}: {
+  src: string;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
+}) {
+  const [brush, setBrush] = useState(48);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const drawing = useRef(false);
+
+  const syncSize = () => {
+    const img = imgRef.current;
+    const c = canvasRef.current;
+    if (img && c && (c.width !== img.naturalWidth || c.height !== img.naturalHeight)) {
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+    }
+  };
+
+  const paint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * c.width;
+    const y = ((e.clientY - rect.top) / rect.height) * c.height;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(x, y, brush, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  return (
+    <div className="mask-wrap">
+      <div className="mask-stage">
+        <img ref={imgRef} src={src} onLoad={syncSize} alt="" draggable={false} />
+        <canvas
+          ref={canvasRef}
+          onPointerDown={(e) => {
+            drawing.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            paint(e);
+          }}
+          onPointerMove={(e) => drawing.current && paint(e)}
+          onPointerUp={() => (drawing.current = false)}
+          onPointerLeave={() => (drawing.current = false)}
+        />
+      </div>
+      <div className="dl-row">
+        <label className="gen-num">
+          fırça{" "}
+          <input
+            type="number"
+            min={4}
+            max={256}
+            value={brush}
+            onChange={(e) => setBrush(Number(e.target.value))}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            const c = canvasRef.current;
+            c?.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+          }}
+        >
+          maskeyi temizle
+        </button>
+        <span className="muted">beyaza boyanan alan yeniden çizilir</span>
+      </div>
+    </div>
+  );
 }
 
 export default function GeneratePanel() {
@@ -37,11 +145,27 @@ export default function GeneratePanel() {
   const [steps, setSteps] = useState(30);
   const [cfg, setCfg] = useState(7);
   const [seed, setSeed] = useState(-1);
+  const [sampler, setSampler] = useState("");
+  const [vram, setVram] = useState("max");
+  const [mode, setMode] = useState<Mode>("txt2img");
+  const [init, setInit] = useState<InitPick | null>(null);
+  const [strength, setStrength] = useState(0.75);
+  const [op, setOp] = useState({ left: 0, right: 256, top: 0, bottom: 0 });
+  const [cnModel, setCnModel] = useState("");
+  const [cnImage, setCnImage] = useState<{ path: string; name: string } | null>(null);
+  const [cnPrep, setCnPrep] = useState("canny");
+  const [cnScale, setCnScale] = useState(0.8);
+  const [ipImage, setIpImage] = useState<{ path: string; name: string } | null>(null);
+  const [ipScale, setIpScale] = useState(0.6);
   const [imageJobs, setImageJobs] = useState<JobInfo[]>([]);
   const [assets, setAssets] = useState<AssetInfo[]>([]);
-  const [progress, setProgress] = useState<Record<string, { value: number; message: string }>>({});
+  const [progress, setProgress] = useState<
+    Record<string, { value: number; message: string; preview?: string }>
+  >({});
   const [formError, setFormError] = useState("");
+  const [busy, setBusy] = useState(false);
   const lastEvent = useRef(0);
+  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const refreshJobs = () => {
     fetchJobs().then((all) => setImageJobs(all.filter((j) => j.kind === "image"))).catch(() => undefined);
@@ -69,8 +193,16 @@ export default function GeneratePanel() {
     for (let i = lastEvent.current; i < events.length; i++) {
       const e = events[i];
       if (e.topic === "job.progress") {
-        const { id, value, message } = e.data as { id: string; value: number; message: string };
-        setProgress((p) => ({ ...p, [id]: { value, message } }));
+        const { id, value, message, preview } = e.data as {
+          id: string;
+          value: number;
+          message: string;
+          preview?: string;
+        };
+        setProgress((p) => ({
+          ...p,
+          [id]: { value, message, preview: preview ?? p[id]?.preview },
+        }));
       } else if (e.topic.startsWith("job.")) {
         needsRefresh = true;
       }
@@ -82,14 +214,48 @@ export default function GeneratePanel() {
 
   const running = imageJobs.find((j) => j.status === "running" || j.status === "queued");
 
+  // Kaynak görsel seçildiğinde çıktı boyutunu görselin (8'e yuvarlanmış) boyutuna çek
+  const adoptInit = (pick: InitPick) => {
+    setInit(pick);
+    const probe = new Image();
+    probe.onload = () => {
+      setCustomW(snap(probe.naturalWidth));
+      setCustomH(snap(probe.naturalHeight));
+      setSize("custom");
+    };
+    probe.src = pick.url;
+  };
+
+  const pickInitFile = async (file: File) => {
+    setFormError("");
+    try {
+      const up = await uploadImageFile(file);
+      adoptInit({ path: up.path, url: URL.createObjectURL(file) });
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const exportMask = (): string | null => {
+    const c = maskCanvasRef.current;
+    if (!c || !c.width) return null;
+    const out = document.createElement("canvas");
+    out.width = c.width;
+    out.height = c.height;
+    const ctx = out.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(c, 0, 0);
+    return out.toDataURL("image/png");
+  };
+
   const generate = async (ev: React.FormEvent) => {
     ev.preventDefault();
     setFormError("");
-    // 8'in katına yuvarla (VAE zorunluluğu); 512–2048 aralığına sıkıştır
-    const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8));
     const [w, h] =
       size === "custom" ? [snap(customW), snap(customH)] : size.split("x").map(Number);
-    const params = {
+    const params: Record<string, unknown> = {
       model_path: modelPath,
       prompt,
       negative_prompt: negative,
@@ -102,18 +268,65 @@ export default function GeneratePanel() {
         loras: loras.map((l) => ({ path: l.path, weight: l.weight })),
       }),
     };
+    if (sampler) params.sampler = sampler;
+    if (vram !== "max") params.vram_mode = vram;
+    if (mode !== "txt2img") {
+      if (!init) {
+        setFormError("kaynak görsel seçin (dosya yükleyin ya da galeriden 'kaynak al')");
+        return;
+      }
+      params.mode = mode;
+      params.init_image = init.path;
+      params.strength = strength;
+      if (init.assetId) params.parent_asset_id = init.assetId;
+    }
+    setBusy(true);
     try {
+      if (mode === "inpaint") {
+        const maskUrl = exportMask();
+        if (!maskUrl) {
+          setFormError("maske çizin (kaynak görselin üzerine boyayın)");
+          return;
+        }
+        const up = await uploadDataUrl("mask.png", maskUrl);
+        params.mask_image = up.path;
+      }
+      if (mode === "outpaint") params.outpaint = { ...op };
+      if (mode === "txt2img" && cnModel && cnImage) {
+        params.controlnets = [
+          { model: cnModel, image: cnImage.path, scale: cnScale, preprocess: cnPrep },
+        ];
+      }
+      if (mode === "txt2img" && ipImage) {
+        params.ip_adapter = { image: ipImage.path, scale: ipScale };
+      }
       if (batch > 1) await createJobBatch("image", params, batch);
       else await createJob("image", params);
       refreshJobs();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
+
+  const runningPreview = running ? progress[running.id]?.preview : undefined;
 
   return (
     <div className="panel-body">
       <form className="dl-form" onSubmit={generate}>
+        <div className="mode-tabs">
+          {(Object.keys(MODE_LABELS) as Mode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={mode === m ? "active" : ""}
+              onClick={() => setMode(m)}
+            >
+              {MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
         <select value={modelPath} onChange={(e) => setModelPath(e.target.value)} required>
           <option value="" disabled>
             {models.length === 0 ? "checkpoint bulunamadı — İndirmeler panelinden indirin" : "model seç"}
@@ -137,16 +350,68 @@ export default function GeneratePanel() {
           onChange={(e) => setNegative(e.target.value)}
           rows={2}
         />
+
+        {mode !== "txt2img" && (
+          <div className="dl-row">
+            <label className="file-pick">
+              kaynak görsel…
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => e.target.files?.[0] && pickInitFile(e.target.files[0])}
+              />
+            </label>
+            {init && <img className="init-thumb" src={init.url} alt="" />}
+            {init && (
+              <button type="button" onClick={() => setInit(null)}>
+                kaldır
+              </button>
+            )}
+            <label className="gen-num">
+              güç{" "}
+              <input
+                type="number"
+                min={0.05}
+                max={1}
+                step={0.05}
+                value={strength}
+                onChange={(e) => setStrength(Number(e.target.value))}
+              />
+            </label>
+          </div>
+        )}
+        {mode === "inpaint" && init && <MaskEditor src={init.url} canvasRef={maskCanvasRef} />}
+        {mode === "outpaint" && (
+          <div className="dl-row">
+            {(["left", "right", "top", "bottom"] as const).map((k) => (
+              <label className="gen-num" key={k}>
+                {{ left: "sol", right: "sağ", top: "üst", bottom: "alt" }[k]}{" "}
+                <input
+                  type="number"
+                  min={0}
+                  max={1024}
+                  step={8}
+                  value={op[k]}
+                  onChange={(e) => setOp({ ...op, [k]: Number(e.target.value) })}
+                />
+              </label>
+            ))}
+            <span className="muted">piksel cinsinden tuval genişletme</span>
+          </div>
+        )}
+
         <div className="dl-row">
-          <select value={size} onChange={(e) => setSize(e.target.value)}>
-            <option>1024x1024</option>
-            <option>896x1152</option>
-            <option>1152x896</option>
-            <option>768x1344</option>
-            <option>1344x768</option>
-            <option value="custom">özel…</option>
-          </select>
-          {size === "custom" && (
+          {mode !== "outpaint" && (
+            <select value={size} onChange={(e) => setSize(e.target.value)}>
+              <option>1024x1024</option>
+              <option>896x1152</option>
+              <option>1152x896</option>
+              <option>768x1344</option>
+              <option>1344x768</option>
+              <option value="custom">özel…</option>
+            </select>
+          )}
+          {mode !== "outpaint" && size === "custom" && (
             <>
               <label className="gen-num">
                 G{" "}
@@ -172,6 +437,13 @@ export default function GeneratePanel() {
               </label>
             </>
           )}
+          <select value={sampler} onChange={(e) => setSampler(e.target.value)}>
+            {SAMPLERS.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
           <label className="gen-num">
             adım{" "}
             <input
@@ -207,10 +479,107 @@ export default function GeneratePanel() {
               onChange={(e) => setBatch(Number(e.target.value))}
             />
           </label>
-          <button type="submit" disabled={!connected || !modelPath || !!running}>
+          <button type="submit" disabled={!connected || !modelPath || !!running || busy}>
             {running ? "Üretiliyor…" : batch > 1 ? `Üret ×${batch}` : "Üret"}
           </button>
         </div>
+
+        <details className="adv">
+          <summary>gelişmiş — VRAM · ControlNet · IP-Adapter</summary>
+          <div className="dl-row">
+            <label className="gen-num">
+              VRAM{" "}
+              <select value={vram} onChange={(e) => setVram(e.target.value)}>
+                <option value="max">tam GPU</option>
+                <option value="balanced">dengeli (model offload)</option>
+                <option value="low">düşük VRAM (sequential)</option>
+              </select>
+            </label>
+            {vram !== "max" && <span className="muted">offload modunda yalnız metin→görsel çalışır</span>}
+          </div>
+          {mode === "txt2img" && (
+            <>
+              <div className="dl-row">
+                <input
+                  type="text"
+                  placeholder="ControlNet: model yolu ya da HF repo (ör. diffusers/controlnet-canny-sdxl-1.0)"
+                  value={cnModel}
+                  onChange={(e) => setCnModel(e.target.value)}
+                />
+                <select value={cnPrep} onChange={(e) => setCnPrep(e.target.value)}>
+                  <option value="canny">canny çıkar</option>
+                  <option value="none">hazır koşul görseli</option>
+                </select>
+                <label className="gen-num">
+                  etki{" "}
+                  <input
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={cnScale}
+                    onChange={(e) => setCnScale(Number(e.target.value))}
+                  />
+                </label>
+                <label className="file-pick">
+                  {cnImage ? cnImage.name : "koşul görseli…"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      try {
+                        const up = await uploadImageFile(f);
+                        setCnImage({ path: up.path, name: f.name });
+                      } catch (err) {
+                        setFormError(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="dl-row">
+                <label className="file-pick">
+                  {ipImage ? ipImage.name : "IP-Adapter referans görseli…"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      try {
+                        const up = await uploadImageFile(f);
+                        setIpImage({ path: up.path, name: f.name });
+                      } catch (err) {
+                        setFormError(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                </label>
+                {ipImage && (
+                  <>
+                    <label className="gen-num">
+                      etki{" "}
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        value={ipScale}
+                        onChange={(e) => setIpScale(Number(e.target.value))}
+                      />
+                    </label>
+                    <button type="button" onClick={() => setIpImage(null)}>
+                      kaldır
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </details>
+
         {loraModels.length > 0 && (
           <div className="dl-row">
             <select
@@ -259,7 +628,9 @@ export default function GeneratePanel() {
       {running && (
         <div className="dl-item">
           <div className="dl-head">
-            <span className="dl-name">{running.status === "queued" ? "kuyrukta" : progress[running.id]?.message ?? "başlıyor…"}</span>
+            <span className="dl-name">
+              {running.status === "queued" ? "kuyrukta" : progress[running.id]?.message ?? "başlıyor…"}
+            </span>
           </div>
           <div className="dl-bar">
             <div
@@ -267,26 +638,39 @@ export default function GeneratePanel() {
               style={{ width: `${((progress[running.id]?.value ?? 0) * 100).toFixed(0)}%` }}
             />
           </div>
+          {runningPreview && <img className="live-preview" src={runningPreview} alt="" />}
         </div>
       )}
 
       <div className="gallery">
         {assets.map((a) => {
           const url = assetUrl(a);
-          const prompt = String(a.meta.params?.prompt ?? "");
+          const promptText = String(a.meta.params?.prompt ?? "");
           return (
             <figure key={a.id} className="gallery-item">
-              <a href={url} target="_blank" rel="noreferrer" title={prompt}>
+              <a href={url} target="_blank" rel="noreferrer" title={promptText}>
                 <img src={url} alt="" loading="lazy" />
               </a>
-              <button
-                className="regen"
-                title="Aynı parametrelerle yeniden üret"
-                onClick={() => regenerateAsset(a.id).then(refreshJobs).catch(() => undefined)}
-                disabled={!!running}
-              >
-                ↻ yeniden üret
-              </button>
+              <div className="gallery-actions">
+                <button
+                  className="regen"
+                  title="Aynı parametrelerle yeniden üret"
+                  onClick={() => regenerateAsset(a.id).then(refreshJobs).catch(() => undefined)}
+                  disabled={!!running}
+                >
+                  ↻ yeniden üret
+                </button>
+                <button
+                  className="regen"
+                  title="Bu görseli img2img/inpaint kaynağı yap"
+                  onClick={() => {
+                    adoptInit({ path: a.path, url, assetId: a.id });
+                    if (mode === "txt2img") setMode("img2img");
+                  }}
+                >
+                  ⤴ kaynak al
+                </button>
+              </div>
             </figure>
           );
         })}

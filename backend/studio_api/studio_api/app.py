@@ -29,6 +29,7 @@ from studio_api.routes.downloads import router as downloads_router
 from studio_api.routes.jobs import router as jobs_router
 from studio_api.routes.models import router as models_router
 from studio_api.routes.projects import router as projects_router
+from studio_api.routes.uploads import router as uploads_router
 
 log = get_logger("studio_api")
 
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router, dependencies=[Depends(_check_token)])
     app.include_router(projects_router, dependencies=[Depends(_check_token)])
     app.include_router(assets_router, dependencies=[Depends(_check_token)])
+    app.include_router(uploads_router, dependencies=[Depends(_check_token)])
     # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
 

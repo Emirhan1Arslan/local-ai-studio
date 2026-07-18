@@ -32,3 +32,17 @@ uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe \
 
 Sistem transformers'ı ileride yükselirse pin gevşetilebilir; Faz 15 ilk-çalıştırma
 sihirbazı bu reçeteyi otomatikleştirecek.
+
+## Opsiyonel image env ekleri (Faz 4 sonu)
+
+```bash
+# ControlNet 'canny' ön işlemcisi için (saf wheel, torch'a dokunmaz)
+uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe opencv-python-headless
+```
+
+- `accelerate` zaten kurulu (0.34.2) — `vram_mode: balanced/low` offload bunu kullanır.
+- IP-Adapter ağırlıkları ilk kullanımda HF cache'e iner (`h94/IP-Adapter`);
+  ControlNet modeli iş parametresinde yol ya da HF repo id olarak verilir
+  (ör. `diffusers/controlnet-canny-sdxl-1.0` — ilk kullanımda ~2.5 GB indirir).
+- FLUX/SD3 tek dosya checkpoint'leri text encoder'ları HF'den tamamlar; ilk
+  kullanım ağ ister. `model_family` verilmezse aile dosya başlığından algılanır.

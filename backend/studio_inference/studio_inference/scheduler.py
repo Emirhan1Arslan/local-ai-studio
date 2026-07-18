@@ -290,11 +290,13 @@ class Scheduler:
                     continue
                 etype = event.get("event")
                 if etype == "progress":
+                    extra = {"preview": event["preview"]} if event.get("preview") else {}
                     self._emit(
                         "job.progress",
                         id=job_id,
                         value=event.get("value", 0),
                         message=event.get("message", ""),
+                        **extra,
                     )
                 elif etype == "done":
                     result = event.get("result", {})

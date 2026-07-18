@@ -140,6 +140,38 @@ export async function fetchAssets(kind?: string, limit = 24): Promise<AssetInfo[
   return r.json();
 }
 
+export interface UploadOut {
+  path: string;
+  size_bytes: number;
+}
+
+async function postUpload(filename: string, dataBase64: string): Promise<UploadOut> {
+  const r = await fetch("/v1/uploads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, data_base64: dataBase64 }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `upload ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function uploadImageFile(file: File): Promise<UploadOut> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  return postUpload(file.name, dataUrl.split(",", 2)[1] ?? "");
+}
+
+export async function uploadDataUrl(filename: string, dataUrl: string): Promise<UploadOut> {
+  return postUpload(filename, dataUrl.split(",", 2)[1] ?? "");
+}
+
 export async function regenerateAsset(id: string): Promise<{ job_id: string }> {
   const r = await fetch(`/v1/assets/${id}/regenerate`, { method: "POST" });
   if (!r.ok) throw new Error(`regenerate ${r.status}`);

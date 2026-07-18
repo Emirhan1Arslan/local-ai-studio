@@ -45,8 +45,15 @@ def register_asset_for_job(job_id: str) -> str | None:
 
     with session_scope() as session:
         job = session.get(Job, job_id)
+        # Asset Graph: kaynak görselden türetilen çıktı (img2img/inpaint/outpaint)
+        # parent_id ile kaynağına bağlanır — türev zinciri buradan kurulur.
+        parent_id = None
+        wanted_parent = (job.params or {}).get("parent_asset_id")
+        if wanted_parent and session.get(Asset, wanted_parent) is not None:
+            parent_id = wanted_parent
         asset = Asset(
             project_id=project_id,
+            parent_id=parent_id,
             kind=job.kind,
             path=path,
             meta={

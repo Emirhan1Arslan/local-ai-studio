@@ -77,6 +77,11 @@ class Settings(BaseSettings):
         return self.data_dir / "outputs"
 
     @property
+    def uploads_dir(self) -> Path:
+        # UI'dan gelen kaynak görsel/maske dosyaları (img2img, inpaint, controlnet)
+        return self.data_dir / "uploads"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "studio.db"
 
@@ -90,6 +95,7 @@ class Settings(BaseSettings):
             self.plugins_dir,
             self.envs_dir,
             self.outputs_dir,
+            self.uploads_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
         for sub in MODEL_SUBDIRS:

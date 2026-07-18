@@ -29,7 +29,12 @@ export default function ConsolePanel() {
       {visible.map((e, i) => (
         <div className="line" key={i}>
           <span className="ts">{new Date(e.ts).toLocaleTimeString()}</span>{" "}
-          <span className="topic">[{e.topic}]</span> {JSON.stringify(e.data)}
+          <span className="topic">[{e.topic}]</span>{" "}
+          {(() => {
+            // canlı önizleme base64'ü gibi dev alanlar konsolu boğmasın
+            const s = JSON.stringify(e.data);
+            return s.length > 300 ? s.slice(0, 300) + "…" : s;
+          })()}
         </div>
       ))}
       <div ref={endRef} />
