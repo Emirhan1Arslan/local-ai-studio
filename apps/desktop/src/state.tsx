@@ -7,12 +7,17 @@ import {
   type ReactNode,
 } from "react";
 import {
+  configureApi,
   fetchHealth,
   fetchSystemInfo,
   openEventSocket,
   type StudioEvent,
   type SystemInfo,
 } from "./api";
+
+interface TauriGlobal {
+  core?: { invoke?: (cmd: string) => Promise<unknown> };
+}
 
 interface StudioState {
   connected: boolean;
@@ -71,7 +76,24 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           retry = window.setTimeout(connect, 2000);
         });
     };
-    connect();
+    // Tauri kabuğunda: sidecar'ın portunu/token'ını kabuktan al, sonra bağlan.
+    // Tarayıcı dev modunda __TAURI__ yoktur; göreli istekler vite proxy'sinden geçer.
+    const boot = async () => {
+      try {
+        const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+        if (tauri?.core?.invoke) {
+          const b = (await tauri.core.invoke("backend_info")) as {
+            port?: number;
+            token?: string;
+          };
+          if (b?.port) configureApi(`http://127.0.0.1:${b.port}`, b.token ?? "");
+        }
+      } catch {
+        // kabuk bilgisi alınamadı: göreli adreslerle dene (yeniden bağlanma zaten var)
+      }
+      if (alive) connect();
+    };
+    void boot();
     return () => {
       alive = false;
       window.clearTimeout(retry);

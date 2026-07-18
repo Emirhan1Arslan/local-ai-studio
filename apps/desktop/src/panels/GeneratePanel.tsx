@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  apiUrl,
   createJob,
   createJobBatch,
   fetchAssets,
@@ -49,7 +50,7 @@ const SAMPLERS: [string, string][] = [
 ];
 
 function assetUrl(a: AssetInfo): string {
-  return `/outputs/${a.path.split(/[\\/]/).pop()}`;
+  return apiUrl(`/outputs/${a.path.split(/[\\/]/).pop()}`);
 }
 
 const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8));

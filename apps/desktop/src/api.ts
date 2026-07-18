@@ -1,4 +1,25 @@
-// REST /v1 istemcisi + WS olay tipleri (backend studio_core.events ile senkron tutulur).
+﻿// REST /v1 istemcisi + WS olay tipleri (backend studio_core.events ile senkron tutulur).
+
+// Tauri kabuğunda sidecar adresi/token'ı configureApi ile ayarlanır (state.tsx bootstrap).
+// Tarayıcı dev modunda boş kalır: istekler göreli gider, vite proxy'si 8710'a yönlendirir.
+let apiBase = "";
+let apiToken = "";
+
+export function configureApi(base: string, token: string): void {
+  apiBase = base.replace(/\/+$/, "");
+  apiToken = token;
+}
+
+/** Statik dosyalar (ör. /outputs/…) ve mutlak adres gereken yerler için tam URL. */
+export function apiUrl(path: string): string {
+  return apiBase + path;
+}
+
+function req(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (apiToken) headers.set("Authorization", `Bearer ${apiToken}`);
+  return fetch(apiBase + path, { ...init, headers });
+}
 
 export interface GpuInfo {
   index: number;
@@ -45,13 +66,13 @@ export interface ModelInfo {
 
 export async function fetchModels(kind?: string): Promise<ModelInfo[]> {
   const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
-  const r = await fetch(`/v1/models${q}`);
+  const r = await req(`/v1/models${q}`);
   if (!r.ok) throw new Error(`models ${r.status}`);
   return r.json();
 }
 
 export async function rescanModels(): Promise<{ added: number; removed: number; updated: number; total: number }> {
-  const r = await fetch("/v1/models/rescan", { method: "POST" });
+  const r = await req("/v1/models/rescan", { method: "POST" });
   if (!r.ok) throw new Error(`rescan ${r.status}`);
   return r.json();
 }
@@ -72,7 +93,7 @@ export interface JobInfo {
 }
 
 export async function fetchJobs(limit = 50): Promise<JobInfo[]> {
-  const r = await fetch(`/v1/jobs?limit=${limit}`);
+  const r = await req(`/v1/jobs?limit=${limit}`);
   if (!r.ok) throw new Error(`jobs ${r.status}`);
   return r.json();
 }
@@ -82,7 +103,7 @@ export async function createJob(
   params: Record<string, unknown>,
   priority = 0,
 ): Promise<JobInfo> {
-  const r = await fetch("/v1/jobs", {
+  const r = await req("/v1/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, params, priority }),
@@ -100,7 +121,7 @@ export async function createJobBatch(
   count: number,
   priority = 0,
 ): Promise<JobInfo[]> {
-  const r = await fetch("/v1/jobs/batch", {
+  const r = await req("/v1/jobs/batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, params, count, priority }),
@@ -116,7 +137,7 @@ export async function jobAction(
   id: string,
   action: "cancel" | "pause" | "resume",
 ): Promise<boolean> {
-  const r = await fetch(`/v1/jobs/${id}/${action}`, { method: "POST" });
+  const r = await req(`/v1/jobs/${id}/${action}`, { method: "POST" });
   if (!r.ok) return false;
   return (await r.json()).ok;
 }
@@ -135,7 +156,7 @@ export interface AssetInfo {
 export async function fetchAssets(kind?: string, limit = 24): Promise<AssetInfo[]> {
   const q = new URLSearchParams({ limit: String(limit) });
   if (kind) q.set("kind", kind);
-  const r = await fetch(`/v1/assets?${q}`);
+  const r = await req(`/v1/assets?${q}`);
   if (!r.ok) throw new Error(`assets ${r.status}`);
   return r.json();
 }
@@ -146,7 +167,7 @@ export interface UploadOut {
 }
 
 async function postUpload(filename: string, dataBase64: string): Promise<UploadOut> {
-  const r = await fetch("/v1/uploads", {
+  const r = await req("/v1/uploads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filename, data_base64: dataBase64 }),
@@ -173,7 +194,7 @@ export async function uploadDataUrl(filename: string, dataUrl: string): Promise<
 }
 
 export async function regenerateAsset(id: string): Promise<{ job_id: string }> {
-  const r = await fetch(`/v1/assets/${id}/regenerate`, { method: "POST" });
+  const r = await req(`/v1/assets/${id}/regenerate`, { method: "POST" });
   if (!r.ok) throw new Error(`regenerate ${r.status}`);
   return r.json();
 }
@@ -218,16 +239,16 @@ export interface DownloadRequest {
 }
 
 export async function fetchDownloads(): Promise<DownloadInfo[]> {
-  const r = await fetch("/v1/downloads");
+  const r = await req("/v1/downloads");
   if (!r.ok) throw new Error(`downloads ${r.status}`);
   return r.json();
 }
 
-export async function createDownload(req: DownloadRequest): Promise<DownloadInfo> {
-  const r = await fetch("/v1/downloads", {
+export async function createDownload(request: DownloadRequest): Promise<DownloadInfo> {
+  const r = await req("/v1/downloads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+    body: JSON.stringify(request),
   });
   if (!r.ok) {
     const body = await r.json().catch(() => null);
@@ -240,26 +261,30 @@ export async function downloadAction(
   id: string,
   action: "pause" | "resume" | "cancel",
 ): Promise<boolean> {
-  const r = await fetch(`/v1/downloads/${id}/${action}`, { method: "POST" });
+  const r = await req(`/v1/downloads/${id}/${action}`, { method: "POST" });
   if (!r.ok) return false;
   return (await r.json()).ok;
 }
 
 export async function fetchSystemInfo(): Promise<SystemInfo> {
-  const r = await fetch("/v1/system/info");
+  const r = await req("/v1/system/info");
   if (!r.ok) throw new Error(`system/info ${r.status}`);
   return r.json();
 }
 
 export async function fetchHealth(): Promise<{ status: string; version: string }> {
-  const r = await fetch("/v1/health");
+  const r = await req("/v1/health");
   if (!r.ok) throw new Error(`health ${r.status}`);
   return r.json();
 }
 
 export function openEventSocket(onEvent: (e: StudioEvent) => void): WebSocket {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/v1/ws`);
+  // Tauri kabuğu: sidecar adresi ws şemasına çevrilir + token sorgusu; dev: göreli.
+  const wsBase = apiBase
+    ? apiBase.replace(/^http/, "ws")
+    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+  const q = apiToken ? `?token=${encodeURIComponent(apiToken)}` : "";
+  const ws = new WebSocket(`${wsBase}/v1/ws${q}`);
   ws.onmessage = (msg) => {
     try {
       onEvent(JSON.parse(msg.data));

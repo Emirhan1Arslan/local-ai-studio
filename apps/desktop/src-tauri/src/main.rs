@@ -36,13 +36,35 @@ fn spawn_backend() -> std::io::Result<(Child, Backend)> {
         .spawn()?;
 
     let stdout = child.stdout.take().expect("sidecar stdout alınamadı");
+    let mut reader = BufReader::new(stdout);
+    let mut backend = Backend::default();
     let mut line = String::new();
-    BufReader::new(stdout).read_line(&mut line)?;
-    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap_or_default();
-    let backend = Backend {
-        port: v["port"].as_u64().unwrap_or(0) as u16,
-        token: v["token"].as_str().unwrap_or_default().to_string(),
-    };
+    // uv/araç gürültüsüne karşı dayanıklılık: ilk 20 satırda {"port",...} JSON'ını ara.
+    for _ in 0..20 {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break; // sidecar erken öldü
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+            if let Some(port) = v["port"].as_u64() {
+                backend.port = port as u16;
+                backend.token = v["token"].as_str().unwrap_or_default().to_string();
+                break;
+            }
+        }
+    }
+    // Pipe'ı açık tutup boşalt: kapatırsak sidecar'ın sonraki stdout yazımı patlar,
+    // boşaltmazsak tampon dolunca sidecar bloklanır.
+    std::thread::spawn(move || {
+        let mut sink = String::new();
+        loop {
+            sink.clear();
+            match reader.read_line(&mut sink) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
     Ok((child, backend))
 }
 
@@ -68,10 +90,18 @@ fn main() {
         .expect("tauri başlatılamadı")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                // Süreç sızıntısı olmaması Faz 1 DoD'sidir.
+                // Süreç sızıntısı olmaması Faz 1 DoD'sidir. `uv run` bir süreç AĞACI
+                // doğurur (uv → venv python → sunucu); child.kill() yalnız kökü öldürür
+                // ve sunucu yetim kalırdı (canlı testte yakalandı) → ağacı komple öldür.
                 let state: State<Sidecar> = app.state();
                 let child = state.child.lock().unwrap().take();
                 if let Some(mut child) = child {
+                    #[cfg(windows)]
+                    {
+                        let _ = Command::new("taskkill")
+                            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                            .status();
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                 }
