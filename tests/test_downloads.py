@@ -42,11 +42,12 @@ async def fake_server(scope, receive, send):
     await send({"type": "http.response.start", "status": status, "headers": resp_headers})
 
     if path == "/slow":
-        for i in range(0, len(body), 8192):
+        # Yük altında bile pause isteğine yetecek genişlikte pencere (~3 sn)
+        for i in range(0, len(body), 4096):
             await send(
-                {"type": "http.response.body", "body": body[i : i + 8192], "more_body": True}
+                {"type": "http.response.body", "body": body[i : i + 4096], "more_body": True}
             )
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
         await send({"type": "http.response.body", "body": b""})
     else:
         await send({"type": "http.response.body", "body": body})

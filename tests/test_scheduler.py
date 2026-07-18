@@ -94,14 +94,17 @@ def test_kill9_worker_does_not_kill_app(client):
 
 
 def test_pause_resume_queued(client):
-    blocker = _post_job(client, {"steps": 1, "step_ms": 1200})
+    # Slot, süresiz bloker ile tutulur → pause/post sıralaması zamanlamadan bağımsız.
+    blocker = _post_job(client, {"hang": True}, priority=100)
+    _poll_status(client, blocker, {"running"})
+
     paused_id = _post_job(client, {"steps": 1, "step_ms": 10}, priority=50)
     assert client.post(f"/v1/jobs/{paused_id}/pause").json()["ok"]
     other_id = _post_job(client, {"steps": 1, "step_ms": 10}, priority=0)
 
+    assert client.post(f"/v1/jobs/{blocker}/cancel").json()["ok"]
     _poll_status(client, other_id, {"done"})
     assert client.get(f"/v1/jobs/{paused_id}").json()["status"] == "paused"
 
     assert client.post(f"/v1/jobs/{paused_id}/resume").json()["ok"]
     _poll_status(client, paused_id, {"done"})
-    _poll_status(client, blocker, {"done"})
