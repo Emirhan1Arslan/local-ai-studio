@@ -15,12 +15,15 @@ from studio_core.config import get_settings
 from studio_core.hardware import SystemInfo, get_system_info
 from studio_core.logging import get_logger, setup_logging
 from studio_core.migrations import upgrade_to_head
+from studio_inference.scheduler import scheduler
+from studio_inference.telemetry import TelemetryService
 from studio_models.downloader import manager as download_manager
 from studio_models.scanner import scan
 from studio_models.watcher import ModelWatcher
 
 from studio_api.bus import bus
 from studio_api.routes.downloads import router as downloads_router
+from studio_api.routes.jobs import router as jobs_router
 from studio_api.routes.models import router as models_router
 
 log = get_logger("studio_api")
@@ -72,9 +75,19 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(download_manager.recover)
         watcher = ModelWatcher(on_models_changed)
         watcher.start()
+        scheduler._concurrency = settings.worker_concurrency
+        scheduler.set_emit(bus.emit)
+        await scheduler.start()
+        telemetry = TelemetryService(bus.emit, settings.telemetry_interval)
+        telemetry.start()
+        import studio_inference.telemetry as telemetry_mod
+
+        telemetry_mod.telemetry = telemetry
         try:
             yield
         finally:
+            await telemetry.stop()
+            await scheduler.stop()
             watcher.stop()
 
     app = FastAPI(
@@ -87,6 +100,7 @@ def create_app() -> FastAPI:
 
     app.include_router(models_router, dependencies=[Depends(_check_token)])
     app.include_router(downloads_router, dependencies=[Depends(_check_token)])
+    app.include_router(jobs_router, dependencies=[Depends(_check_token)])
 
     app.add_middleware(
         CORSMiddleware,

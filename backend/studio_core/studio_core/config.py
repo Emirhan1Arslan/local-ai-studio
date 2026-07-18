@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Kapalı/lisans onaylı HF repoları için (STUDIO_HF_TOKEN); asla loglanmaz.
     hf_token: str = ""
+    # system.telemetry yayın aralığı (sn)
+    telemetry_interval: float = 2.0
+    # Aynı anda çalışacak worker sayısı (Faz 3'te cihaz başına 1)
+    worker_concurrency: int = 1
 
     @property
     def models_dir(self) -> Path:

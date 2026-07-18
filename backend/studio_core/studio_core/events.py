@@ -20,6 +20,7 @@ EventTopic = Literal[
     "job.done",
     "job.failed",
     "job.canceled",
+    "job.paused",
     "download.queued",
     "download.progress",
     "download.done",

@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "studio-core",
     "studio-models",
+    "studio-inference",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
 ]
@@ -16,6 +17,7 @@ studio-api = "studio_api.main:main"
 [tool.uv.sources]
 studio-core = { workspace = true }
 studio-models = { workspace = true }
+studio-inference = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

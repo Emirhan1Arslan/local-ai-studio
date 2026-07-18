@@ -56,6 +56,68 @@ export async function rescanModels(): Promise<{ added: number; removed: number; 
   return r.json();
 }
 
+export interface JobInfo {
+  id: string;
+  kind: string;
+  status: string;
+  priority: number;
+  owner: string;
+  project_id: string | null;
+  params: Record<string, unknown>;
+  result: Record<string, unknown>;
+  error: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export async function fetchJobs(limit = 50): Promise<JobInfo[]> {
+  const r = await fetch(`/v1/jobs?limit=${limit}`);
+  if (!r.ok) throw new Error(`jobs ${r.status}`);
+  return r.json();
+}
+
+export async function createJob(
+  kind: string,
+  params: Record<string, unknown>,
+  priority = 0,
+): Promise<JobInfo> {
+  const r = await fetch("/v1/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, params, priority }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `job ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function jobAction(
+  id: string,
+  action: "cancel" | "pause" | "resume",
+): Promise<boolean> {
+  const r = await fetch(`/v1/jobs/${id}/${action}`, { method: "POST" });
+  if (!r.ok) return false;
+  return (await r.json()).ok;
+}
+
+export interface GpuTelemetry {
+  index: number;
+  name: string;
+  util_percent: number;
+  vram_used_mb: number;
+  vram_total_mb: number;
+}
+
+export interface TelemetrySnapshot {
+  cpu_percent: number;
+  ram_used_mb: number;
+  ram_total_mb: number;
+  gpus: GpuTelemetry[];
+}
+
 export interface DownloadInfo {
   id: string;
   url: string;

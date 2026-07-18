@@ -9,7 +9,9 @@ import "dockview-react/dist/styles/dockview.css";
 import ConsolePanel from "./panels/ConsolePanel";
 import DownloadsPanel from "./panels/DownloadsPanel";
 import ModelsPanel from "./panels/ModelsPanel";
+import QueuePanel from "./panels/QueuePanel";
 import SystemPanel from "./panels/SystemPanel";
+import VramPanel from "./panels/VramPanel";
 import { useStudio } from "./state";
 
 const LAYOUT_KEY = "lais.layout.v1";
@@ -19,7 +21,15 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   console: ConsolePanel,
   models: ModelsPanel,
   downloads: DownloadsPanel,
+  queue: QueuePanel,
+  vram: VramPanel,
 };
+
+const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
+  { id: "downloads", title: "İndirmeler", near: "models" },
+  { id: "queue", title: "Kuyruk", near: "models" },
+  { id: "vram", title: "VRAM", near: "system" },
+];
 
 function addDefaultPanels(api: DockviewApi) {
   api.addPanel({ id: "system", component: "system", title: "Sistem" });
@@ -30,27 +40,23 @@ function addDefaultPanels(api: DockviewApi) {
     position: { referencePanel: "system", direction: "right" },
   });
   api.addPanel({
-    id: "downloads",
-    component: "downloads",
-    title: "İndirmeler",
-    position: { referencePanel: "models", direction: "within" },
-  });
-  api.addPanel({
     id: "console",
     component: "console",
     title: "Console",
     position: { referencePanel: "system", direction: "below" },
   });
+  ensurePanels(api);
 }
 
 /** Kayıtlı yerleşim eski sürümden kalmışsa sonradan eklenen panelleri tamamla. */
 function ensurePanels(api: DockviewApi) {
-  if (!api.getPanel("downloads")) {
+  for (const p of EXTRA_PANELS) {
+    if (api.getPanel(p.id)) continue;
     api.addPanel({
-      id: "downloads",
-      component: "downloads",
-      title: "İndirmeler",
-      position: api.getPanel("models") ? { referencePanel: "models", direction: "within" } : undefined,
+      id: p.id,
+      component: p.id,
+      title: p.title,
+      position: api.getPanel(p.near) ? { referencePanel: p.near, direction: "within" } : undefined,
     });
   }
 }

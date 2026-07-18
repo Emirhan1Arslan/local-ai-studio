@@ -770,6 +770,7 @@ source = { editable = "backend/studio_api" }
 dependencies = [
     { name = "fastapi" },
     { name = "studio-core" },
+    { name = "studio-inference" },
     { name = "studio-models" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -778,6 +779,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.111" },
     { name = "studio-core", editable = "backend/studio_core" },
+    { name = "studio-inference", editable = "backend/studio_inference" },
     { name = "studio-models", editable = "backend/studio_models" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]

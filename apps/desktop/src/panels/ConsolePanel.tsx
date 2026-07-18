@@ -1,16 +1,32 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStudio } from "../state";
 
 export default function ConsolePanel() {
   const { events } = useStudio();
+  const [showTelemetry, setShowTelemetry] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  const visible = useMemo(
+    () => (showTelemetry ? events : events.filter((e) => e.topic !== "system.telemetry")),
+    [events, showTelemetry],
+  );
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
+  }, [visible]);
+
   return (
     <div className="panel-body console">
-      {events.length === 0 && <p>Olay bekleniyor…</p>}
-      {events.map((e, i) => (
+      <label className="console-filter">
+        <input
+          type="checkbox"
+          checked={showTelemetry}
+          onChange={(e) => setShowTelemetry(e.target.checked)}
+        />{" "}
+        telemetriyi göster
+      </label>
+      {visible.length === 0 && <p>Olay bekleniyor…</p>}
+      {visible.map((e, i) => (
         <div className="line" key={i}>
           <span className="ts">{new Date(e.ts).toLocaleTimeString()}</span>{" "}
           <span className="topic">[{e.topic}]</span> {JSON.stringify(e.data)}
