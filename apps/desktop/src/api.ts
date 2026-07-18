@@ -29,6 +29,33 @@ export interface StudioEvent {
   data: Record<string, unknown>;
 }
 
+export interface ModelInfo {
+  id: string;
+  name: string;
+  family: string;
+  kind: string;
+  format: string;
+  path: string;
+  size_bytes: number;
+  sha256: string;
+  license: string;
+  meta: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function fetchModels(kind?: string): Promise<ModelInfo[]> {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  const r = await fetch(`/v1/models${q}`);
+  if (!r.ok) throw new Error(`models ${r.status}`);
+  return r.json();
+}
+
+export async function rescanModels(): Promise<{ added: number; removed: number; updated: number; total: number }> {
+  const r = await fetch("/v1/models/rescan", { method: "POST" });
+  if (!r.ok) throw new Error(`rescan ${r.status}`);
+  return r.json();
+}
+
 export async function fetchSystemInfo(): Promise<SystemInfo> {
   const r = await fetch("/v1/system/info");
   if (!r.ok) throw new Error(`system/info ${r.status}`);

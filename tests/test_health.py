@@ -2,24 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
-from studio_api.app import create_app
 from studio_core.config import get_settings
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("STUDIO_DATA_DIR", str(tmp_path / "LocalAIStudio"))
-    # Ayar singleton'ını test başına sıfırla
-    import studio_core.config as cfg
-    import studio_core.db as db
-
-    cfg._settings = None
-    db._engine = None
-    db._session_factory = None
-    with TestClient(create_app()) as c:
-        yield c
 
 
 def test_health(client):

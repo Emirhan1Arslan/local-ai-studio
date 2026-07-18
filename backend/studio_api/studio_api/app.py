@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,11 +12,14 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from studio_core import __version__ as core_version
 from studio_core.config import get_settings
-from studio_core.db import create_all
 from studio_core.hardware import SystemInfo, get_system_info
 from studio_core.logging import get_logger, setup_logging
+from studio_core.migrations import upgrade_to_head
+from studio_models.scanner import scan
+from studio_models.watcher import ModelWatcher
 
 from studio_api.bus import bus
+from studio_api.routes.models import router as models_router
 
 log = get_logger("studio_api")
 
@@ -43,14 +47,40 @@ def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
     settings.ensure_dirs()
-    create_all()
+    upgrade_to_head()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        loop = asyncio.get_running_loop()
+
+        def on_models_changed() -> None:
+            # watchdog thread'i: tara, değişiklikleri asyncio veriyoluna aktar
+            result = scan()
+            for topic, items in (
+                ("model.added", result.added),
+                ("model.removed", result.removed),
+                ("model.updated", result.updated),
+            ):
+                for item in items:
+                    loop.call_soon_threadsafe(bus.emit, topic, **item)
+
+        await asyncio.to_thread(scan)  # açılışta tam senkron
+        watcher = ModelWatcher(on_models_changed)
+        watcher.start()
+        try:
+            yield
+        finally:
+            watcher.stop()
 
     app = FastAPI(
         title="Local AI Studio API",
         version=core_version,
         docs_url="/v1/docs",
         openapi_url="/v1/openapi.json",
+        lifespan=lifespan,
     )
+
+    app.include_router(models_router, dependencies=[Depends(_check_token)])
 
     app.add_middleware(
         CORSMiddleware,
