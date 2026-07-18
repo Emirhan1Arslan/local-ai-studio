@@ -32,6 +32,8 @@ export default function GeneratePanel() {
   const [prompt, setPrompt] = useState("");
   const [negative, setNegative] = useState("");
   const [size, setSize] = useState("1024x1024");
+  const [customW, setCustomW] = useState(1024);
+  const [customH, setCustomH] = useState(1024);
   const [steps, setSteps] = useState(30);
   const [cfg, setCfg] = useState(7);
   const [seed, setSeed] = useState(-1);
@@ -83,7 +85,10 @@ export default function GeneratePanel() {
   const generate = async (ev: React.FormEvent) => {
     ev.preventDefault();
     setFormError("");
-    const [w, h] = size.split("x").map(Number);
+    // 8'in katına yuvarla (VAE zorunluluğu); 512–2048 aralığına sıkıştır
+    const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8));
+    const [w, h] =
+      size === "custom" ? [snap(customW), snap(customH)] : size.split("x").map(Number);
     const params = {
       model_path: modelPath,
       prompt,
@@ -139,7 +144,34 @@ export default function GeneratePanel() {
             <option>1152x896</option>
             <option>768x1344</option>
             <option>1344x768</option>
+            <option value="custom">özel…</option>
           </select>
+          {size === "custom" && (
+            <>
+              <label className="gen-num">
+                G{" "}
+                <input
+                  type="number"
+                  min={512}
+                  max={2048}
+                  step={8}
+                  value={customW}
+                  onChange={(e) => setCustomW(Number(e.target.value))}
+                />
+              </label>
+              <label className="gen-num">
+                Y{" "}
+                <input
+                  type="number"
+                  min={512}
+                  max={2048}
+                  step={8}
+                  value={customH}
+                  onChange={(e) => setCustomH(Number(e.target.value))}
+                />
+              </label>
+            </>
+          )}
           <label className="gen-num">
             adım{" "}
             <input

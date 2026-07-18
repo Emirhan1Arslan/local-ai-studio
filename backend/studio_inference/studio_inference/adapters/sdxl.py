@@ -92,6 +92,9 @@ class SdxlAdapter:
         from PIL.PngImagePlugin import PngInfo
 
         steps = int(params.get("steps", 30))
+        # VAE zorunluluğu: boyutlar 8'in katı olmalı; API'den gelen serbest değerleri hizala
+        width = max(256, (int(params.get("width", 1024)) // 8) * 8)
+        height = max(256, (int(params.get("height", 1024)) // 8) * 8)
         seed = int(params.get("seed", -1))
         if seed < 0:
             seed = random.randrange(2**31)
@@ -131,8 +134,8 @@ class SdxlAdapter:
                 image = self._pipe(
                     prompt=params.get("prompt", ""),
                     negative_prompt=params.get("negative_prompt", "") or None,
-                    width=int(params.get("width", 1024)),
-                    height=int(params.get("height", 1024)),
+                    width=width,
+                    height=height,
                     num_inference_steps=steps,
                     guidance_scale=float(params.get("cfg", 7.0)),
                     generator=generator,
