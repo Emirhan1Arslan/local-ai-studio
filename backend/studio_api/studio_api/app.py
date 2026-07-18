@@ -154,7 +154,8 @@ def create_app() -> FastAPI:
             while True:
                 event = await q.get()
                 await ws.send_text(event.model_dump_json())
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            # istemci koptu / soket kapandı: sessizce ayrıl (uvicorn'a spam olmasın)
             pass
         finally:
             bus.unsubscribe(q)
