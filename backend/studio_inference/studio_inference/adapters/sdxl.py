@@ -50,9 +50,7 @@ class SdxlAdapter:
         except ImportError as exc:
             raise RuntimeError(
                 "image worker ortamı eksik (torch/diffusers bulunamadı). "
-                "Kurulum: uv venv ~/LocalAIStudio/envs/image --python 3.10 "
-                "--system-site-packages && uv pip install --python "
-                "~/LocalAIStudio/envs/image/Scripts/python.exe diffusers  |  " + str(exc)
+                "Kurulum reçetesi: docs/worker-envs.md  |  " + str(exc)
             ) from exc
 
         use_cuda = torch.cuda.is_available()
