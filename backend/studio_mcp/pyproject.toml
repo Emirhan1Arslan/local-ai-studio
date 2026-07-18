@@ -1,0 +1,16 @@
+[project]
+name = "studio-mcp"
+version = "0.1.0"
+description = "Local AI Studio — MCP server: stdio + streamable HTTP (Faz 12)"
+requires-python = ">=3.11"
+dependencies = ["studio-core"]
+
+[tool.uv.sources]
+studio-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["studio_mcp"]

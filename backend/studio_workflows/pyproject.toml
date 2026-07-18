@@ -1,0 +1,16 @@
+[project]
+name = "studio-workflows"
+version = "0.1.0"
+description = "Local AI Studio — Tipli graph executor + node kütüphanesi (Faz 10)"
+requires-python = ">=3.11"
+dependencies = ["studio-core"]
+
+[tool.uv.sources]
+studio-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["studio_workflows"]

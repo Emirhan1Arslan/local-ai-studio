@@ -1,0 +1,10 @@
+{
+  "name": "local-ai-studio",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "pnpm --filter desktop dev",
+    "build": "pnpm --filter desktop build"
+  },
+  "packageManager": "pnpm@10.32.1"
+}
