@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createJob,
+  createJobBatch,
   fetchAssets,
   fetchJobs,
   fetchModels,
@@ -11,6 +12,12 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
+interface LoraPick {
+  path: string;
+  name: string;
+  weight: number;
+}
+
 function assetUrl(a: AssetInfo): string {
   return `/outputs/${a.path.split(/[\\/]/).pop()}`;
 }
@@ -18,6 +25,9 @@ function assetUrl(a: AssetInfo): string {
 export default function GeneratePanel() {
   const { events, connected } = useStudio();
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [loraModels, setLoraModels] = useState<ModelInfo[]>([]);
+  const [loras, setLoras] = useState<LoraPick[]>([]);
+  const [batch, setBatch] = useState(1);
   const [modelPath, setModelPath] = useState("");
   const [prompt, setPrompt] = useState("");
   const [negative, setNegative] = useState("");
@@ -45,6 +55,7 @@ export default function GeneratePanel() {
         );
         setModels(cands);
         if (cands.length > 0 && !modelPath) setModelPath(cands[0].path);
+        setLoraModels(all.filter((m) => m.kind === "lora" && m.format === "safetensors"));
       })
       .catch(() => setModels([]));
     refreshJobs();
@@ -73,17 +84,22 @@ export default function GeneratePanel() {
     ev.preventDefault();
     setFormError("");
     const [w, h] = size.split("x").map(Number);
+    const params = {
+      model_path: modelPath,
+      prompt,
+      negative_prompt: negative,
+      width: w,
+      height: h,
+      steps,
+      cfg,
+      seed,
+      ...(loras.length > 0 && {
+        loras: loras.map((l) => ({ path: l.path, weight: l.weight })),
+      }),
+    };
     try {
-      await createJob("image", {
-        model_path: modelPath,
-        prompt,
-        negative_prompt: negative,
-        width: w,
-        height: h,
-        steps,
-        cfg,
-        seed,
-      });
+      if (batch > 1) await createJobBatch("image", params, batch);
+      else await createJob("image", params);
       refreshJobs();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -149,10 +165,62 @@ export default function GeneratePanel() {
             seed{" "}
             <input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} />
           </label>
+          <label className="gen-num">
+            batch{" "}
+            <input
+              type="number"
+              min={1}
+              max={16}
+              value={batch}
+              onChange={(e) => setBatch(Number(e.target.value))}
+            />
+          </label>
           <button type="submit" disabled={!connected || !modelPath || !!running}>
-            {running ? "Üretiliyor…" : "Üret"}
+            {running ? "Üretiliyor…" : batch > 1 ? `Üret ×${batch}` : "Üret"}
           </button>
         </div>
+        {loraModels.length > 0 && (
+          <div className="dl-row">
+            <select
+              value=""
+              onChange={(e) => {
+                const m = loraModels.find((x) => x.path === e.target.value);
+                if (m && !loras.some((l) => l.path === m.path)) {
+                  setLoras([...loras, { path: m.path, name: m.name, weight: 1.0 }]);
+                }
+              }}
+            >
+              <option value="" disabled>
+                LoRA ekle…
+              </option>
+              {loraModels.map((m) => (
+                <option key={m.id} value={m.path}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            {loras.map((l, i) => (
+              <span key={l.path} className="lora-chip">
+                {l.name}
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={l.weight}
+                  onChange={(e) => {
+                    const next = [...loras];
+                    next[i] = { ...l, weight: Number(e.target.value) };
+                    setLoras(next);
+                  }}
+                />
+                <button type="button" onClick={() => setLoras(loras.filter((x) => x.path !== l.path))}>
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {formError && <p className="err-text">{formError}</p>}
       </form>
 

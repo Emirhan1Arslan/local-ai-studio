@@ -25,6 +25,10 @@ class JobRequest(BaseModel):
     project_id: str | None = None
 
 
+class BatchJobRequest(JobRequest):
+    count: int = Field(default=1, ge=1, le=16)
+
+
 class JobOut(BaseModel):
     id: str
     kind: str
@@ -51,29 +55,49 @@ async def create_job(req: JobRequest) -> JobOut:
 
         raise ApiError(400, "bad_request", f"bilinmeyen iş türü: {req.kind!r}")
 
-    # Görüntü işleri çıktıyı outputs/ altına yazar (Faz 4 proje sistemi bunu asset'e bağlayacak)
-    if req.kind == "image" and not req.params.get("output_path"):
+    job_id = await asyncio.to_thread(_create_job_row, req.kind, dict(req.params), req)
+    scheduler.notify()
+    return await _get_out(job_id)
+
+
+@router.post("/batch")
+async def create_jobs_batch(req: BatchJobRequest) -> list[JobOut]:
+    """Batch üretim + seed varyasyonları (Faz 4): sabit seed s → s, s+1, … s+n-1."""
+    if req.kind not in available_kinds():
+        from studio_api.app import ApiError
+
+        raise ApiError(400, "bad_request", f"bilinmeyen iş türü: {req.kind!r}")
+
+    base_seed = req.params.get("seed", -1)
+    job_ids: list[str] = []
+    for i in range(req.count):
+        params = dict(req.params)
+        if isinstance(base_seed, int) and base_seed >= 0:
+            params["seed"] = base_seed + i
+        params.pop("output_path", None)  # her iş kendi benzersiz çıktısını alır
+        job_id = await asyncio.to_thread(_create_job_row, req.kind, params, req)
+        job_ids.append(job_id)
+    scheduler.notify()
+    return [await _get_out(j) for j in job_ids]
+
+
+def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
+    # Görüntü işleri çıktıyı outputs/ altına yazar (proje sistemi bunu asset'e bağlar)
+    if kind == "image" and not params.get("output_path"):
         settings = get_settings()
         settings.ensure_dirs()
-        req.params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")
-
-    def _create() -> str:
-        with session_scope() as session:
-            job = Job(
-                kind=req.kind,
-                params=req.params,
-                priority=req.priority,
-                project_id=req.project_id,
-                status=JobStatus.QUEUED,
-            )
-            session.add(job)
-            session.flush()
-            return job.id
-
-    job_id = await asyncio.to_thread(_create)
-    scheduler.notify()
-    out = await _get_out(job_id)
-    return out
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")
+    with session_scope() as session:
+        job = Job(
+            kind=kind,
+            params=params,
+            priority=req.priority,
+            project_id=req.project_id,
+            status=JobStatus.QUEUED,
+        )
+        session.add(job)
+        session.flush()
+        return job.id
 
 
 @router.get("")

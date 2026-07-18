@@ -94,6 +94,24 @@ export async function createJob(
   return r.json();
 }
 
+export async function createJobBatch(
+  kind: string,
+  params: Record<string, unknown>,
+  count: number,
+  priority = 0,
+): Promise<JobInfo[]> {
+  const r = await fetch("/v1/jobs/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, params, count, priority }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `batch ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function jobAction(
   id: string,
   action: "cancel" | "pause" | "resume",

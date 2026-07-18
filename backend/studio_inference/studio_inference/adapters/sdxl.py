@@ -20,22 +20,30 @@ from collections.abc import Iterator
 from typing import Any
 
 
+def _lora_name(path: str) -> str:
+    return str(path).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+
+
 def _a1111_metadata(params: dict, seed: int) -> str:
     """Üretim metadata'sını A1111 uyumlu 'parameters' metnine dönüştürür (Faz 4 planı)."""
     neg = params.get("negative_prompt", "")
     lines = [params.get("prompt", "")]
     if neg:
         lines.append("Negative prompt: " + neg)
-    lines.append(
-        "Steps: {steps}, CFG scale: {cfg}, Seed: {seed}, Size: {w}x{h}, Model: {model}".format(
-            steps=params.get("steps", 30),
-            cfg=params.get("cfg", 7.0),
-            seed=seed,
-            w=params.get("width", 1024),
-            h=params.get("height", 1024),
-            model=str(params.get("model_path", "")).replace("\\", "/").rsplit("/", 1)[-1],
-        )
+    tail = "Steps: {steps}, CFG scale: {cfg}, Seed: {seed}, Size: {w}x{h}, Model: {model}".format(
+        steps=params.get("steps", 30),
+        cfg=params.get("cfg", 7.0),
+        seed=seed,
+        w=params.get("width", 1024),
+        h=params.get("height", 1024),
+        model=str(params.get("model_path", "")).replace("\\", "/").rsplit("/", 1)[-1],
     )
+    loras = params.get("loras") or []
+    if loras:
+        tail += ", Lora: " + ", ".join(
+            "{}:{}".format(_lora_name(lo.get("path", "")), lo.get("weight", 1.0)) for lo in loras
+        )
+    lines.append(tail)
     return "\n".join(lines)
 
 
@@ -105,8 +113,21 @@ class SdxlAdapter:
             )
             return cb_kwargs
 
+        # Çoklu LoRA (Faz 4): iş başına yüklenir, iş sonunda kaldırılır — base model
+        # cache'i temiz kalır, farklı LoRA kombinasyonları birbirini etkilemez.
+        loras = params.get("loras") or []
+
         def run() -> None:
             try:
+                if loras:
+                    names = []
+                    weights = []
+                    for i, lo in enumerate(loras):
+                        name = f"lora{i}"
+                        self._pipe.load_lora_weights(lo["path"], adapter_name=name)
+                        names.append(name)
+                        weights.append(float(lo.get("weight", 1.0)))
+                    self._pipe.set_adapters(names, weights)
                 image = self._pipe(
                     prompt=params.get("prompt", ""),
                     negative_prompt=params.get("negative_prompt", "") or None,
@@ -129,6 +150,11 @@ class SdxlAdapter:
             except Exception as exc:  # thread sınırı: hata ana akışa taşınır
                 outcome["error"] = str(exc)
             finally:
+                if loras:
+                    try:
+                        self._pipe.unload_lora_weights()
+                    except Exception:
+                        pass
                 events.put(None)
 
         worker = threading.Thread(target=run, daemon=True)
