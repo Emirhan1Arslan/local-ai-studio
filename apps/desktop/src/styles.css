@@ -179,3 +179,15 @@ table.models th { color: var(--muted); font-weight: 600; }
 .st-failed, .st-canceled { color: var(--err); border-color: var(--err); }
 .st-downloading { color: var(--accent); border-color: var(--accent); }
 .err-text { color: var(--err); font-size: 12px; margin: 6px 0 0; }
+.ok-text { color: var(--ok); font-size: 12px; margin: 6px 0 0; }
+
+/* Ayarlar paneli */
+.settings-section { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.settings-section:last-of-type { border-bottom: none; }
+.settings-section h3 { font-size: 13px; margin: 0 0 8px; color: var(--text); }
+.settings-section .muted { font-size: 12px; margin: 6px 0 0; }
+.path-row { display: contents; }
+.path-row dd {
+  font-family: Consolas, monospace; font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

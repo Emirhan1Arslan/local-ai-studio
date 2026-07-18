@@ -17,6 +17,12 @@ import {
 
 interface TauriGlobal {
   core?: { invoke?: (cmd: string) => Promise<unknown> };
+  event?: {
+    listen?: (
+      name: string,
+      cb: (event: { payload: unknown }) => void,
+    ) => Promise<() => void>;
+  };
 }
 
 interface StudioState {
@@ -51,6 +57,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     let ws: WebSocket | null = null;
     let retry: number | undefined;
     let alive = true;
+    let unlistenBackendChanged: (() => void) | undefined;
 
     const connect = () => {
       fetchHealth()
@@ -76,6 +83,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           retry = window.setTimeout(connect, 2000);
         });
     };
+
     // Tauri kabuğunda: sidecar'ın portunu/token'ını kabuktan al, sonra bağlan.
     // Tarayıcı dev modunda __TAURI__ yoktur; göreli istekler vite proxy'sinden geçer.
     const boot = async () => {
@@ -88,6 +96,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           };
           if (b?.port) configureApi(`http://127.0.0.1:${b.port}`, b.token ?? "");
         }
+        if (tauri?.event?.listen) {
+          // Sidecar beklenmedik çökerse Rust tarafı yeniden doğurur ve yeni
+          // port/token'ı bu olayla bildirir — UI restart beklemeden yeni adrese geçer.
+          unlistenBackendChanged = await tauri.event.listen("backend-changed", (event) => {
+            const b = event.payload as { port?: number; token?: string };
+            if (!b?.port) return;
+            configureApi(`http://127.0.0.1:${b.port}`, b.token ?? "");
+            if (ws) {
+              ws.onclose = null; // eski soketin gecikmeli close'u taze bağlantıyı ezmesin
+              ws.close();
+              ws = null;
+            }
+            window.clearTimeout(retry);
+            connect();
+          });
+        }
       } catch {
         // kabuk bilgisi alınamadı: göreli adreslerle dene (yeniden bağlanma zaten var)
       }
@@ -98,6 +122,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       alive = false;
       window.clearTimeout(retry);
       ws?.close();
+      unlistenBackendChanged?.();
     };
   }, []);
 

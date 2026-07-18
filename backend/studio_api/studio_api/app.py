@@ -17,6 +17,7 @@ from studio_core.config import get_settings
 from studio_core.hardware import SystemInfo, get_system_info
 from studio_core.logging import get_logger, setup_logging
 from studio_core.migrations import upgrade_to_head
+from studio_core.settings_store import load_overrides
 from studio_inference.scheduler import scheduler
 from studio_inference.telemetry import TelemetryService
 from studio_models.downloader import manager as download_manager
@@ -29,6 +30,7 @@ from studio_api.routes.downloads import router as downloads_router
 from studio_api.routes.jobs import router as jobs_router
 from studio_api.routes.models import router as models_router
 from studio_api.routes.projects import router as projects_router
+from studio_api.routes.settings import router as settings_router
 from studio_api.routes.uploads import router as uploads_router
 
 log = get_logger("studio_api")
@@ -58,6 +60,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     settings.ensure_dirs()
     upgrade_to_head()
+    load_overrides()  # DB'deki kalıcı ayar override'ları (Faz 1 cila) süreç başında uygulanır
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -110,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(projects_router, dependencies=[Depends(_check_token)])
     app.include_router(assets_router, dependencies=[Depends(_check_token)])
     app.include_router(uploads_router, dependencies=[Depends(_check_token)])
+    app.include_router(settings_router, dependencies=[Depends(_check_token)])
     # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
 

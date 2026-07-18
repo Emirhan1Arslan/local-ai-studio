@@ -278,6 +278,57 @@ export async function fetchHealth(): Promise<{ status: string; version: string }
   return r.json();
 }
 
+export interface SettingsPaths {
+  data_dir: string;
+  models_dir: string;
+  outputs_dir: string;
+  cache_dir: string;
+  logs_dir: string;
+  envs_dir: string;
+  uploads_dir: string;
+  db_path: string;
+}
+
+export interface SettingsInfo {
+  hf_token_set: boolean;
+  telemetry_interval: number;
+  worker_idle_timeout: number;
+  worker_concurrency: number;
+  paths: SettingsPaths;
+}
+
+export interface SettingsUpdate {
+  hf_token?: string;
+  telemetry_interval?: number;
+  worker_idle_timeout?: number;
+  worker_concurrency?: number;
+}
+
+export async function fetchSettings(): Promise<SettingsInfo> {
+  const r = await req("/v1/settings");
+  if (!r.ok) throw new Error(`settings ${r.status}`);
+  return r.json();
+}
+
+export async function updateSettings(patch: SettingsUpdate): Promise<SettingsInfo> {
+  const r = await req("/v1/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `settings ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function createDiagnosticsBundle(): Promise<{ path: string }> {
+  const r = await req("/v1/settings/diagnostics", { method: "POST" });
+  if (!r.ok) throw new Error(`diagnostics ${r.status}`);
+  return r.json();
+}
+
 export function openEventSocket(onEvent: (e: StudioEvent) => void): WebSocket {
   // Tauri kabuğu: sidecar adresi ws şemasına çevrilir + token sorgusu; dev: göreli.
   const wsBase = apiBase

@@ -12,6 +12,7 @@ import subprocess
 from collections.abc import Callable
 
 import psutil
+from studio_core.config import get_settings
 from studio_core.logging import get_logger
 
 log = get_logger("studio_inference.telemetry")
@@ -76,7 +77,8 @@ class TelemetryService:
             snapshot = await asyncio.to_thread(self._snapshot)
             self.last = snapshot
             self._emit("system.telemetry", **snapshot)
-            await asyncio.sleep(self._interval)
+            # Ayarlar panelinden değişince restart'sız etkili olsun diye taze okunur.
+            await asyncio.sleep(get_settings().telemetry_interval)
 
     def _snapshot(self) -> dict:
         vm = psutil.virtual_memory()
