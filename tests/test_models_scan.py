@@ -74,3 +74,64 @@ def test_watcher_detects_new_model(client):
             return
         time.sleep(0.25)
     raise AssertionError("watcher yeni modeli 10 sn içinde algılamadı")
+
+
+def test_multi_component_pipeline_collapses_to_one_model(client):
+    """Faz 8 bulgusu: LTX-Video gibi çok bileşenli bir diffusers pipeline'ı
+    (model_index.json + alt klasörler, bazı bileşenler parçalı) tarayıcıda TEK
+    bir model olarak görünmeli — her bileşen/parça ayrı satır olmamalı."""
+    root = _models_dir(client)
+    pipeline = root / "video" / "MyVideoModel"
+    (pipeline / "transformer").mkdir(parents=True)
+    (pipeline / "vae").mkdir(parents=True)
+    (pipeline / "model_index.json").write_text("{}", encoding="utf-8")
+    files = [
+        pipeline / "transformer" / "diffusion_pytorch_model-00001-of-00002.safetensors",
+        pipeline / "transformer" / "diffusion_pytorch_model-00002-of-00002.safetensors",
+        pipeline / "vae" / "diffusion_pytorch_model.safetensors",
+    ]
+    for f in files:
+        write_fake_safetensors(f)
+
+    summary = client.post("/v1/models/rescan").json()
+    assert summary["added"] == 1
+
+    models = client.get("/v1/models", params={"kind": "video"}).json()
+    assert len(models) == 1
+    assert models[0]["name"] == "MyVideoModel"
+    assert models[0]["size_bytes"] == sum(f.stat().st_size for f in files)
+    assert models[0]["meta"]["components"] == [f.name for f in files]  # sıralı: transformer önce, vae sonra
+
+
+def test_same_folder_multi_weight_collapses_to_one_model(client):
+    """XTTS-v2 deseni: aynı klasörde config.json + birden çok ağırlık dosyası
+    (ör. model.pth + speakers_xtts.pth) — tek model, en büyük dosya temsilci."""
+    root = _models_dir(client)
+    sub = root / "tts" / "MyTTS"
+    sub.mkdir(parents=True)
+    (sub / "config.json").write_text("{}", encoding="utf-8")
+    write_fake_safetensors(sub / "model.safetensors", tensor_names=["a", "b"])
+    write_fake_safetensors(sub / "sidecar.safetensors")
+
+    client.post("/v1/models/rescan")
+    models = client.get("/v1/models", params={"kind": "tts"}).json()
+    assert len(models) == 1
+    assert models[0]["name"] == "MyTTS"
+
+
+def test_independent_assets_in_subfolder_stay_separate(client):
+    """Kokoro'nun voices/ deseni: config.json'sız bir alt klasördeki her dosya
+    bağımsız bir varlık olarak kalmalı (ör. seçilebilir ayrı ses profilleri)."""
+    root = _models_dir(client)
+    core = root / "tts" / "MyKokoro"
+    core.mkdir(parents=True)
+    (core / "config.json").write_text("{}", encoding="utf-8")
+    write_fake_safetensors(core / "core.safetensors")
+    voices = core / "voices"
+    voices.mkdir()
+    write_fake_safetensors(voices / "voice_a.safetensors")
+    write_fake_safetensors(voices / "voice_b.safetensors")
+
+    client.post("/v1/models/rescan")
+    names = {m["name"] for m in client.get("/v1/models", params={"kind": "tts"}).json()}
+    assert names == {"MyKokoro", "voice_a", "voice_b"}

@@ -210,6 +210,18 @@ Her fazda: **Amaç → Adımlar → Çıktılar → Kabul Kriterleri (DoD)**. Te
 
 **DoD:** SDXL checkpoint'i HF'den indirilir, doğrulanır, otomatik listelenir; yarıda kesilen indirme kaldığı yerden sürer; klasöre elle atılan GGUF 5 sn içinde görünür.
 
+**Düzeltme (2026-07-19, kullanıcı geri bildirimi):** Faz 7/8'de eklenen çok
+dosyalı modeller (LTX-Video'nun 7 parçalı bileşeni, XTTS-v2'nin model.pth +
+speakers_xtts.pth'i) tarayıcıda her dosya ayrı bir "model" olarak listeleniyordu
+— kullanıcı bunu fark etti ("bu kadar olmaması lazım"). `studio_models/
+metadata.py`'ye `group_key()`/`extract_group()` eklendi: bir ağırlık dosyasının
+mantıksal model kökü (üst klasörlerde `model_index.json` — çok bileşenli bir
+diffusers pipeline'ı — ya da aynı klasörde `config.json` kardeşi varsa o klasör)
+bulunup tüm grup TEK bir ModelRecord'a (temsilci: en büyük dosya, boyut: toplam)
+toplanıyor. Kokoro'nun `voices/*.pt` gibi bağımsız kullanılabilir alt varlıkları
+(config.json'sız alt klasör) bilinçli olarak AYRI kalıyor. Canlıda doğrulandı:
+gerçek DB'de 24 satır → 17'ye düştü (LTX-Video 7→1, XTTS-v2 2→1).
+
 ---
 
 ### FAZ 3 — Inference Runtime + GPU Scheduler (4–6 hafta)

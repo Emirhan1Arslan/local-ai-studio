@@ -146,33 +146,72 @@ def classify(path: Path, models_root: Path) -> str:
     return "llm" if path.suffix.lower() == ".gguf" else "unknown"
 
 
-def extract(path: Path, models_root: Path) -> dict[str, Any]:
-    """Tek dosya için ModelRecord alanlarını üretir. Bozuk dosyada meta.error doldurulur."""
-    fmt = _FORMAT_BY_EXT.get(path.suffix.lower(), "")
-    size = path.stat().st_size
+def group_key(path: Path, models_root: Path) -> str:
+    """path'in ait olduğu mantıksal model grubunun anahtarını bulur — birden çok
+    ağırlık dosyası tek bir model olarak birleştirilecekse (çok bileşenli bir
+    diffusers pipeline'ı: model_index.json + transformer/vae/text_encoder alt
+    klasörleri, bazıları parçalı; ya da tek klasörde birden çok ağırlık dosyası:
+    XTTS-v2'nin model.pth + speakers_xtts.pth'i) grup anahtarı o klasördür.
+    Aksi halde (ör. Kokoro'nun voices/*.pt ses paketleri — her biri bağımsız
+    kullanılabilir bir varlık) dosyanın kendisi kendi grubudur."""
+    d = path.parent
+    cur = d
+    while True:
+        try:
+            cur.relative_to(models_root)
+        except ValueError:
+            break
+        if (cur / "model_index.json").exists():
+            return str(cur)
+        if cur == models_root:
+            break
+        cur = cur.parent
+    if d != models_root and (d / "config.json").exists():
+        return str(d)
+    return str(path)
+
+
+def extract_group(key: str, paths: list[Path], models_root: Path) -> dict[str, Any]:
+    """Bir mantıksal model için (tek dosya ya da group_key ile gruplanmış çok
+    bileşenli/parçalı bir ağırlık kümesi) tek bir ModelRecord alan seti üretir.
+    Bozuk dosyada meta.error doldurulur."""
+    paths = sorted(paths)  # deterministik: her taramada aynı temsilci dosya seçilir
+    representative = max(paths, key=lambda p: p.stat().st_size)
+    fmt = _FORMAT_BY_EXT.get(representative.suffix.lower(), "")
+    total_size = sum(p.stat().st_size for p in paths)
+
     meta: dict[str, Any] = {}
     family = ""
-    try:
-        if fmt == "safetensors":
-            meta = read_safetensors_header(path)
-        elif fmt == "gguf":
-            meta = read_gguf_metadata(path)
-            family = str(meta["metadata"].get("general.architecture", ""))
-    except (ValueError, OSError, json.JSONDecodeError, struct.error) as exc:
-        meta = {"error": f"metadata okunamadı: {exc}"}
-    name = path.stem
-    # transformers/diffusers klasör düzeni (config.json + ağırlık dosyası bir arada):
-    # anlamlı ad tek başına dosyada değil, çok dosyalı snapshot'ın klasöründedir
-    # (ör. ControlNet, ya da Faz 5 araçlarının HF repo indirmeleri — bkz. /v1/downloads/snapshot)
-    if path.parent != models_root and (path.parent / "config.json").exists():
-        name = path.parent.name
+    if len(paths) == 1:
+        try:
+            if fmt == "safetensors":
+                meta = read_safetensors_header(representative)
+            elif fmt == "gguf":
+                meta = read_gguf_metadata(representative)
+                family = str(meta["metadata"].get("general.architecture", ""))
+        except (ValueError, OSError, json.JSONDecodeError, struct.error) as exc:
+            meta = {"error": f"metadata okunamadı: {exc}"}
+    else:
+        meta = {"components": [p.name for p in paths]}
+
+    root_path = Path(key)
+    name = root_path.name if root_path.is_dir() else representative.stem
+
     return {
         "name": name,
         "family": family,
-        "kind": classify(path, models_root),
+        "kind": classify(representative, models_root),
         "format": fmt,
-        "path": str(path),
-        "size_bytes": size,
-        "sha256": sha256_of(path) if size <= HASH_SIZE_LIMIT else "",
+        "path": str(representative),
+        "size_bytes": total_size,
+        "sha256": (
+            sha256_of(representative) if len(paths) == 1 and total_size <= HASH_SIZE_LIMIT else ""
+        ),
         "meta": meta,
     }
+
+
+def extract(path: Path, models_root: Path) -> dict[str, Any]:
+    """Tek dosya için ModelRecord alan seti üretir — extract_group'un tek-dosyalık
+    kısayolu (scanner.py grup taraması için extract_group'u doğrudan kullanır)."""
+    return extract_group(group_key(path, models_root), [path], models_root)
