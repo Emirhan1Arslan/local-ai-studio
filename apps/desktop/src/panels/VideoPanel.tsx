@@ -83,6 +83,18 @@ export default function VideoPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
+  // LTX-Video çok-bileşenli bir diffusers pipeline'ı (transformer/vae/text_encoder
+  // alt klasörleri, bazıları parçalı) — Model Browser her bileşeni ayrı satır olarak
+  // listeler. UI'da tek/temiz bir seçim için yalnızca vae bileşenini (her pipeline'da
+  // tam olarak bir dosya) gösterip görünen adı üst klasörden (gerçek model adı) alıyoruz;
+  // hangi bileşen seçilirse seçilsin adapter (_resolve_pipeline_root) aynı köke çözer.
+  const videoModelOptions = videoModels
+    .filter((m) => /[\\/]vae[\\/]/.test(m.path))
+    .map((m) => ({
+      path: m.path,
+      label: m.path.split(/[\\/]/).slice(-3, -2)[0] ?? m.name,
+    }));
+
   useEffect(() => {
     let needsRefresh = false;
     for (let i = lastEvent.current; i < events.length; i++) {
@@ -268,9 +280,9 @@ export default function VideoPanel() {
             <div className="dl-row">
               <select value={modelPath} onChange={(e) => setModelPath(e.target.value)}>
                 <option value="">Lightricks/LTX-Video (varsayılan, ilk kullanımda indirir)</option>
-                {videoModels.map((m) => (
-                  <option key={m.id} value={m.path}>
-                    {m.name} — Model Browser
+                {videoModelOptions.map((m) => (
+                  <option key={m.path} value={m.path}>
+                    {m.label} — Model Browser
                   </option>
                 ))}
               </select>

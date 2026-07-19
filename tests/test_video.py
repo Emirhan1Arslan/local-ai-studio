@@ -133,3 +133,40 @@ def test_videotool_convert_requires_known_format(client):
     )
     d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
     assert "bilinmeyen format" in d["error"]
+
+
+def test_resolve_pipeline_root_walks_up_to_model_index(tmp_path):
+    """LTX-Video gibi çok-bileşenli pipeline'larda Model Browser'da hangi
+    bileşen (transformer/vae/text_encoder) seçilirse seçilsin aynı köke
+    çözülmeli — bkz. adapters/video.py modül docstring'i."""
+    from studio_inference.adapters.video import _resolve_pipeline_root
+
+    root = tmp_path / "LTX-Video"
+    (root / "vae").mkdir(parents=True)
+    (root / "transformer").mkdir()
+    (root / "model_index.json").write_text("{}")
+    (root / "vae" / "config.json").write_text("{}")
+    weight = root / "vae" / "diffusion_pytorch_model.safetensors"
+    weight.write_bytes(b"")
+
+    assert _resolve_pipeline_root(str(weight)) == str(root)
+
+
+def test_resolve_pipeline_root_falls_back_to_config_sibling(tmp_path):
+    """model_index.json yoksa (tek-bileşenli, ör. ControlNet) sdxl.py'nin
+    _resolve_repo desenine düşer: config.json kardeşi varsa üst klasör."""
+    from studio_inference.adapters.video import _resolve_pipeline_root
+
+    d = tmp_path / "some-controlnet"
+    d.mkdir()
+    (d / "config.json").write_text("{}")
+    weight = d / "diffusion_pytorch_model.safetensors"
+    weight.write_bytes(b"")
+
+    assert _resolve_pipeline_root(str(weight)) == str(d)
+
+
+def test_resolve_pipeline_root_passthrough_for_repo_id():
+    from studio_inference.adapters.video import _resolve_pipeline_root
+
+    assert _resolve_pipeline_root("Lightricks/LTX-Video") == "Lightricks/LTX-Video"

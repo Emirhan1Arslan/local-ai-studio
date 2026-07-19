@@ -386,13 +386,6 @@ genel süreç-kill mekanizmasından (adapter'a özgü kod gerekmeden) ücretsiz
 - Adım 4 kalan: RIFE kare interpolasyonu, video upscale
 - Adım 5 kalan: gerçek timeline/kare-kare önizleme (şimdilik standart video
   oynatıcı yeterli)
-- **Video modelleri Model Manager entegrasyonu:** ses modelleri için yapılan
-  entegrasyonun (bkz. yukarı) aksine, LTX-Video çok-bileşenli bir diffusers
-  dizini (transformer/vae/text_encoder alt klasörleri, her biri kendi
-  ağırlık parçalarıyla) — tarayıcı bunu tek bir "model" olarak değil birden
-  çok parça olarak listeler. Bu farklı entegrasyon deseni bilinçli olarak bu
-  fazın sonuna bırakıldı; şimdilik model_path boşsa HF repo id'sinden
-  (`Lightricks/LTX-Video`) doğrudan self-download çalışıyor.
 
 Kurulum notu: LTX-Video, `envs/image`'ın zaten sahip olduğu diffusers
 0.32.2'de hazır çıktı (`LTXPipeline`/`LTXImageToVideoPipeline`) — ayrı bir
@@ -401,6 +394,19 @@ T5 tokenizer için) kuruldu. Video encode kendi FFmpeg subprocess çözümüyle
 yapılıyor (Faz 7'nin FFmpeg build'i paylaşılıyor) — `imageio-ffmpeg` gibi ek
 bir paket gerekmedi. Tam bağımlılık zinciri ve canlı doğrulama sayıları
 docs/worker-envs.md'de.
+
+**Video modelleri Model Manager entegrasyonu (2026-07-19, ses modelleriyle
+aynı gün tamamlandı):** LTX-Video çok-bileşenli bir diffusers pipeline'ı
+olduğundan (transformer/vae/text_encoder alt klasörleri, bazıları parçalı —
+tarayıcı bunu 7 ayrı satır olarak listeliyor) ses modellerinden farklı bir
+çözüm gerekti: `adapters/video.py::_resolve_pipeline_root()` Model
+Browser'da hangi bileşen seçilirse seçilsin (en fazla 3 üst klasöre kadar
+`model_index.json` arayarak) doğru pipeline köküne çözüyor;
+`HF_HUB_OFFLINE=1` ile sıfır ağ isteğiyle canlı doğrulandı. UI'da tek/temiz
+bir seçim için yalnızca `vae` bileşeni (her pipeline'da tam bir dosya)
+gösteriliyor, adı üst klasörden türetiliyor. Model, bu makinede
+`models/video/LTX-Video/` altına yerleştirildi (~27 GB, HF cache'inden
+kopyalandı) ve Modeller panelinde görünür/yönetilebilir.
 
 ---
 

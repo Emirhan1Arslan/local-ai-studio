@@ -9,8 +9,12 @@ düşük VRAM, plan'ın belirttiği varsayılan) bu ilk dilimde uygulandı — k
 plan.md'de "Faz 8 kalanları" olarak not düşüldü.
 
 params:
-- model_path: LTX-Video diffusers dizini/HF repo id (Model Browser'dan; boşsa
-  "Lightricks/LTX-Video" varsayılanı kullanılır — ilk kullanımda ~13 GB indirir)
+- model_path: Model Browser'da kayıtlı bir bileşen ağırlık dosyası (LTX-Video
+  çok-bileşenli bir diffusers pipeline'ı olduğundan — transformer/vae/
+  text_encoder alt klasörleri — hangi bileşen seçilirse seçilsin üst
+  model_index.json köküne çözülür), doğrudan bir diffusers dizini, ya da HF
+  repo id; boşsa "Lightricks/LTX-Video" varsayılanı kullanılır (ilk
+  kullanımda ~20 GB indirir)
 - mode: t2v (vars.) | i2v
 - init_image: kaynak görsel yolu (i2v için zorunlu)
 - prompt / negative_prompt · width (vars. 704) · height (vars. 480) ·
@@ -21,6 +25,7 @@ params:
 
 from __future__ import annotations
 
+import os
 import queue
 import random
 import threading
@@ -28,6 +33,33 @@ from collections.abc import Iterator
 from typing import Any
 
 from studio_inference.adapters._ffmpeg import ensure_ffmpeg_on_path
+
+
+def _resolve_pipeline_root(path_or_repo: str) -> str:
+    """Model Browser'da LTX-Video gibi çok-bileşenli bir diffusers pipeline'ının
+    HERHANGİ bir bileşen ağırlık dosyası seçilmiş olabilir (ör. .../transformer/
+    diffusion_pytorch_model-00001-of-00002.safetensors) — from_pretrained ise
+    model_index.json'ın olduğu ÜST kökü ister. En fazla 3 üst klasöre kadar
+    model_index.json aranır; bulunamazsa tek-bileşenli desene (config.json
+    kardeşi — ör. ControlNet) düşer, o da yoksa yol/HF repo id olduğu gibi
+    kullanılır."""
+    p = str(path_or_repo)
+    if not os.path.isfile(p):
+        return p
+    d = os.path.dirname(p)
+    for _ in range(3):
+        if not d or not os.path.isdir(d):
+            break
+        if os.path.exists(os.path.join(d, "model_index.json")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    parent = os.path.dirname(p)
+    if parent and os.path.exists(os.path.join(parent, "config.json")):
+        return parent
+    return p
 
 
 def _align_frames(value: Any, lo: int = 9, hi: int = 257) -> int:
@@ -60,7 +92,8 @@ class VideoAdapter:
 
         use_cuda = torch.cuda.is_available()
         dtype = torch.bfloat16 if use_cuda else torch.float32
-        pipe = LTXPipeline.from_pretrained(model_path or "Lightricks/LTX-Video", torch_dtype=dtype)
+        repo = _resolve_pipeline_root(model_path) if model_path else "Lightricks/LTX-Video"
+        pipe = LTXPipeline.from_pretrained(repo, torch_dtype=dtype)
 
         if use_cuda:
             if vram_mode == "low":

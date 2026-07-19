@@ -322,3 +322,32 @@ patlıyordu. Çözüm: `adapters/_ffmpeg.py::has_audio_stream()` (ffprobe ile
 yoklama) eklendi, her iki op da ses izi yoksa yalnız-video bir filtre
 grafiğine düşüyor. `trim`/`concat`/`convert` (gif dahil) op'ları da canlıda
 doğrulandı.
+
+### Video modelleri Model Manager entegrasyonu
+
+Ses modelleri entegrasyonundan (yukarı) farklı bir desen gerekti: LTX-Video
+tek dosyalık bir checkpoint değil, **çok-bileşenli bir diffusers pipeline'ı**
+— `model_index.json` + `transformer/`, `vae/`, `text_encoder/`, `tokenizer/`,
+`scheduler/` alt klasörleri (bazı bileşenler parçalı: text_encoder 4, transformer
+2 `.safetensors` parçası). Tarayıcı (Faz 2) her ağırlık dosyasını ayrı bir
+`ModelRecord` olarak listeler — bu repo için 7 satır (canlıda doğrulandı: 4
+text_encoder + 2 transformer + 1 vae).
+
+**Çözüm:** `adapters/video.py::_resolve_pipeline_root()` — Model Browser'da
+HANGİ bileşen seçilirse seçilsin (transformer'ın bir parçası, vae, text_encoder
+parçalarından biri...) en fazla 3 üst klasöre kadar `model_index.json` arar ve
+bulduğu kökü `LTXPipeline.from_pretrained()`'a verir; bulamazsa tek-bileşenli
+desene (sdxl.py'nin `_resolve_repo`'suyla aynı: `config.json` kardeşi varsa üst
+klasör) düşer, o da yoksa yol/HF repo id'sini olduğu gibi kullanır. Üç farklı
+bileşen dosyası üzerinde test edildi, üçü de aynı köke çözüldü.
+
+UI'da 7 satırlık ham liste yerine tek/temiz bir seçim için `VideoPanel.tsx`
+yalnızca `vae` bileşenini (her pipeline'da tam olarak bir dosya, parçalanmamış)
+gösterip görünen adı üst klasörden (gerçek model adı, ör. "LTX-Video") türetiyor.
+
+**Bu makinede canlı olarak yerleştirildi:** `models/video/LTX-Video/` (indirilen
+~27 GB'lık tam snapshot, HF cache'inden doğrudan kopyalandı — indirme motoru
+yeniden çalıştırılmadı, Faz 7'deki ses modelleri deseniyle aynı). Doğrulama:
+`HF_HUB_OFFLINE=1` + boş `HF_HOME` ile, Model Browser'dan seçilmiş gibi bir
+bileşen dosyası `model_path` olarak verilip gerçek bir üretim hiçbir ağ
+isteği yapmadan başarıyla tamamlandı.
