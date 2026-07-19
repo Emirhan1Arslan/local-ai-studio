@@ -552,3 +552,55 @@ HunyuanVideo/Mochi bu makinede canlı kullanılamıyor olarak bırakıldı — M
 (37.3GB) hiç denenmedi çünkü aynı RAM açığını vereceği neredeyse kesin. Kod
 (`_load_pipeline_split`) kalıcı olarak eklendi — daha küçük modellerde veya
 gelecekte RAM artınca faydalı, geri alınmadı.
+
+## Faz 9 — 3d env (envs/3d, AYRI venv — kuruldu, adapter kodu henüz YOK)
+
+```bash
+uv venv ~/LocalAIStudio/envs/3d \
+  --python "C:\Users\Tars\AppData\Local\Programs\Python\Python310\python.exe" \
+  --system-site-packages
+uv pip install --python ~/LocalAIStudio/envs/3d/Scripts/python.exe \
+  "omegaconf==2.3.0" "einops==0.7.0" "trimesh==4.0.5" rembg huggingface-hub \
+  "imageio[ffmpeg]" "xatlas==0.0.9" "transformers==4.35.0"
+```
+
+**Neden ayrı venv (image ile paylaşılmadı):** TripoSR (image-to-3D kademeli
+listenin ilk/en hafif modeli) `transformers==4.35.0`'a sabitlenmiş —
+envs/image'ın 4.46.3'üyle çakışır. `--system-site-packages` sayesinde her
+venv kendi shadow'unu bağımsız tutuyor (bkz. dosyanın başındaki ilke), yani
+envs/3d'ye 4.35.0 kurmak envs/image'ı ETKİLEMEDİ — canlı doğrulandı
+(`torch.__version__` her iki ortamda da ayrı ayrı doğru geldi).
+
+**TripoSR pip ile kurulamıyor** (resmi README: repo klonlanıp `run.py`
+çalıştırılıyor) — `tsr` paketi bir sonraki adımda vendor edilecek
+(muhtemelen `PYTHONPATH` ile, studio paketlerinin kendi kaynak-import
+deseniyle aynı).
+
+**Bulunan ve çözülen gerçek engel — `torchmcubes` CUDA derlemesi:**
+TripoSR'ın `requirements.txt`'i `git+https://github.com/tatsy/torchmcubes.git`
+istiyor (mesh çıkarımı için marching-cubes, GPU hızlandırmalı). Bu
+makinede derleme **kesin olarak imkansız** — sebep GPU değil, sürücü değil,
+`torch` bile değil: `torch 2.11.0+cu128` CUDA DESTEĞİYLE derlenmiş olduğu
+için, ona bağlanan HERHANGİ bir yeni C++/CUDA eklentisinin CMake
+yapılandırması (`Caffe2Config.cmake`) sistemde **NVIDIA CUDA Toolkit'in**
+(nvcc + geliştirme kütüphaneleri) kurulu olmasını zorunlu kılıyor —
+bu makinede yalnızca GPU sürücüsü var, Toolkit yok (`nvcc` PATH'te
+bulunamadı; llama-cpp-python notundaki "CUDA toolkit kurulmadı" tespitiyle
+tutarlı). Adım adım doğrulandı: build-isolation kapatıldı, `scikit-build-
+core`/`cmake`/`ninja`/`pybind11` elle kuruldu, `CMAKE_PREFIX_PATH` torch'un
+cmake dizinine ayarlandı — hepsi sırayla ilerledi, son adımda kesin olarak
+`Caffe2Config.cmake`'in "CUDA_TOOLKIT_ROOT_DIR not found" hatasında durdu.
+
+CUDA Toolkit'in tam kurulumu büyük, sistem geneli bir değişiklik (sadece bir
+venv'e değil) — kullanıcı onayı olmadan yapılmadı. **Uygulanabilir alternatif
+canlı doğrulandı:** `scikit-image`'in saf-Python `measure.marching_cubes()`'i
+(rembg'nin bağımlılığı olarak zaten kurulu, `skimage.measure.marching_cubes`
+16³'lük rastgele bir hacimde sorunsuz çalıştı) — mesh çıkarımı GPU'da değil
+CPU'da, TripoSR'ın asıl sinir ağı çıkarımı (VRAM'in çoğunu kullanan kısım)
+yine RTX 5090'da koşacak; marching cubes yalnızca son geometri işleme
+adımı, darboğaz olması beklenmiyor. `tsr` paketinin mesh-çıkarım kodu bu
+adaptörle değiştirilecek (bir sonraki adım — henüz yapılmadı).
+
+**Kasıtlı olarak kurulmadı:** `gradio`, `moderngl` — TripoSR'ın kendi demo
+UI'sine/önizleme render'ına ait, bu projede zaten React tabanlı bir 3D
+viewer planlandığı için (plan.md Faz 9 adım 4) gerekmiyor.

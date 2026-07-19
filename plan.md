@@ -452,6 +452,25 @@ notu) Modeller panelinde TEK bir "LTX-Video" kaydı olarak görünüyor.
 
 **DoD:** Tek görselden GLB üretilip viewer'da incelenir; STL bir slicer'da hatasız açılır; FBX Blender'da import edilir.
 
+**Durum (2026-07-20):** Başlangıç — henüz adapter kodu yok, yalnızca ortam
+kuruldu ve en riskli bilinmeyen (torchmcubes'un RTX 5090'da derlenebilirliği)
+çözüldü. `envs/3d` (AYRI venv, `--system-site-packages`) oluşturuldu;
+TripoSR'ın (kademeli listenin ilk/en hafif modeli) bağımlılıkları
+(`transformers==4.35.0` dahil — envs/image'ın 4.46.3'üyle çakışmıyor, her
+venv bağımsız shadow) kuruldu. **Gerçek engel bulundu ve atlatıldı:**
+`torchmcubes`'un CUDA eklentisi bu makinede derlenemiyor çünkü NVIDIA CUDA
+Toolkit (nvcc) kurulu değil (yalnızca sürücü var) — torch'un CUDA'lı
+derlenmiş olması, ona bağlanan HER YENİ C++ eklentisinin CMake'inin Toolkit
+istemesine yol açıyor, GPU'nun kendisiyle ilgisi yok. CUDA Toolkit'in tam
+kurulumu sistem geneli büyük bir değişiklik olduğu için kullanıcı onayı
+olmadan yapılmadı; bunun yerine `scikit-image`'in CPU tabanlı
+`measure.marching_cubes()`'i canlı doğrulanmış bir alternatif olarak
+belirlendi (TripoSR'ın asıl sinir ağı çıkarımı yine GPU'da kalır, yalnızca
+son mesh-çıkarım adımı CPU'ya taşınır). **Sıradaki adım:** TripoSR'ın `tsr`
+paketini vendor edip mesh-çıkarım kodunu `scikit-image` kullanacak şekilde
+uyarlamak, sonra `adapters/mesh.py` + `EngineAdapter` sözleşmesiyle bir ilk
+canlı GLB üretimi. Ayrıntılar docs/worker-envs.md'de.
+
 ---
 
 ### FAZ 10 — Node Workflow Editörü (8–10 hafta)
