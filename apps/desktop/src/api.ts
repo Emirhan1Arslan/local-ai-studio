@@ -275,6 +275,12 @@ export interface HfModelInfo {
   likes: number;
   license: string;
   gated: boolean;
+  size_bytes: number;
+}
+
+export interface HfFileInfo {
+  filename: string;
+  size: number;
 }
 
 export async function searchHfModels(
@@ -292,7 +298,7 @@ export async function searchHfModels(
   return r.json();
 }
 
-export async function fetchHfRepoFiles(repoId: string): Promise<string[]> {
+export async function fetchHfRepoFiles(repoId: string): Promise<HfFileInfo[]> {
   const r = await req(`/v1/downloads/files?${new URLSearchParams({ repo_id: repoId })}`);
   if (!r.ok) {
     const body = await r.json().catch(() => null);

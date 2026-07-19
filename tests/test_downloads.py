@@ -31,6 +31,7 @@ SEARCH_RESULTS = [
         "downloads": 699873,
         "likes": 606,
         "tags": ["safetensors", "license:mit"],
+        "safetensors": {"parameters": {"F16": 1000, "I64": 10}, "total": 1010},
     },
     {
         "id": "gated/model",
@@ -71,9 +72,11 @@ async def fake_server(scope, receive, send):
             body = b"{}"
             status = 404
         else:
-            siblings = [{"rfilename": f} for f in SNAPSHOT_FILES]
+            siblings = [
+                {"rfilename": f, "size": 1024 * (i + 1)} for i, f in enumerate(SNAPSHOT_FILES)
+            ]
             if repo == "nested/repo":
-                siblings = [{"rfilename": "onnx/model.onnx"}]
+                siblings = [{"rfilename": "onnx/model.onnx", "size": 2048}]
             elif repo == "empty/repo":
                 siblings = []
             body = json.dumps({"siblings": siblings}).encode()
@@ -217,7 +220,9 @@ def test_hf_search_returns_curated_fields(dl_client):
     assert first["pipeline_tag"] == "image-segmentation"
     assert first["downloads"] == 699873
     assert first["license"] == "mit"  # tags içindeki "license:mit"tan çıkarıldı
+    assert first["size_bytes"] == 1000 * 2 + 10 * 8  # F16:1000*2 + I64:10*8
     assert rows[1]["gated"] is True
+    assert rows[1]["size_bytes"] == 0  # safetensors metadata'sı yok
 
 
 def test_hf_search_limit_bounds(dl_client):
@@ -228,7 +233,9 @@ def test_hf_search_limit_bounds(dl_client):
 def test_hf_list_files_endpoint(dl_client):
     r = dl_client.get("/v1/downloads/files", params={"repo_id": "org/some-repo"})
     assert r.status_code == 200
-    assert r.json() == SNAPSHOT_FILES
+    rows = r.json()
+    assert [row["filename"] for row in rows] == SNAPSHOT_FILES
+    assert [row["size"] for row in rows] == [1024, 2048, 3072]
 
 
 def test_hf_list_files_repo_not_found(dl_client):

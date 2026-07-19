@@ -4,9 +4,10 @@ import {
   createSnapshotDownload,
   fetchHfRepoFiles,
   searchHfModels,
+  type HfFileInfo,
   type HfModelInfo,
 } from "../api";
-import { SUBDIRS } from "./DownloadsPanel";
+import { fmtBytes, SUBDIRS } from "./DownloadsPanel";
 
 // Her models/ kategorisi için görünen ad + arama filtresinde kullanılacak HF pipeline_tag'i
 // (bazılarının net bir karşılığı yok — "" bırakılırsa arama yalnızca metinle çalışır).
@@ -44,7 +45,7 @@ export default function ExplorePanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<HfFileInfo[]>([]);
   const [filesError, setFilesError] = useState("");
   const [status, setStatus] = useState("");
   const debounceRef = useRef<number | undefined>(undefined);
@@ -150,6 +151,7 @@ export default function ExplorePanel() {
             </div>
             <div className="hf-card-meta muted">
               {m.pipeline_tag && <span>{m.pipeline_tag}</span>}
+              {m.size_bytes > 0 && <span>{fmtBytes(m.size_bytes)} (~)</span>}
               <span>⬇ {fmtCount(m.downloads)}</span>
               <span>♥ {fmtCount(m.likes)}</span>
             </div>
@@ -165,9 +167,10 @@ export default function ExplorePanel() {
               <div className="hf-files">
                 {filesError && <p className="err-text">{filesError}</p>}
                 {files.map((f) => (
-                  <div className="hf-file-row" key={f}>
-                    <span>{f}</span>
-                    <button type="button" onClick={() => downloadFile(m.id, f)}>
+                  <div className="hf-file-row" key={f.filename}>
+                    <span>{f.filename}</span>
+                    <span className="hf-file-size">{f.size > 0 ? fmtBytes(f.size) : ""}</span>
+                    <button type="button" onClick={() => downloadFile(m.id, f.filename)}>
                       indir
                     </button>
                   </div>

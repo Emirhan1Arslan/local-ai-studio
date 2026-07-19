@@ -261,8 +261,9 @@ def hf_resolve_url(repo_id: str, filename: str, revision: str = "main") -> str:
 
 async def hf_list_repo_files(
     repo_id: str, transport: httpx.AsyncBaseTransport | None = None
-) -> list[str]:
-    """HF repo'sundaki dosya adlarını döner (çok dosyalı snapshot indirmeleri için).
+) -> list[dict]:
+    """HF repo'sundaki dosyaları (ad + bayt cinsinden boyut) döner (çok dosyalı
+    snapshot indirmeleri ve Keşfet panelinin dosya listesi için).
 
     transport parametresi, tek-dosya indirme motoruyla aynı test enjeksiyon noktasını
     paylaşır — testlerde manager._transport (ASGITransport) buraya da verilir.
@@ -271,10 +272,39 @@ async def hf_list_repo_files(
     if transport is not None:
         client_kwargs["transport"] = transport
     async with httpx.AsyncClient(**client_kwargs) as client:
-        resp = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+        resp = await client.get(
+            f"https://huggingface.co/api/models/{repo_id}", params={"blobs": "true"}
+        )
     if resp.status_code != 200:
         raise DownloadError(f"HF repo bulunamadı: {repo_id!r} ({resp.status_code})")
-    return [s["rfilename"] for s in resp.json().get("siblings", [])]
+    return [
+        {"filename": s["rfilename"], "size": s.get("size") or 0}
+        for s in resp.json().get("siblings", [])
+    ]
+
+
+# safetensors dtype adı → bayt genişliği; büyüklük tahmini için (bilinmeyen tip: 2 varsayılır)
+_DTYPE_BYTES = {
+    "F64": 8,
+    "I64": 8,
+    "F32": 4,
+    "I32": 4,
+    "F16": 2,
+    "BF16": 2,
+    "I16": 2,
+    "I8": 1,
+    "U8": 1,
+    "BOOL": 1,
+    "F8_E4M3": 1,
+    "F8_E5M2": 1,
+}
+
+
+def estimate_safetensors_bytes(safetensors: dict) -> int:
+    """HF'nin search yanıtındaki safetensors.parameters (dtype → parametre sayısı)
+    dökümünden yaklaşık disk boyutu hesaplar (gerçek dosya boyutuyla ~aynı)."""
+    parameters = safetensors.get("parameters") or {}
+    return sum(count * _DTYPE_BYTES.get(dtype, 2) for dtype, count in parameters.items())
 
 
 async def hf_search_models(
@@ -284,15 +314,33 @@ async def hf_search_models(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[dict]:
     """HF Hub'da model arar (Keşfet paneli). Ham HF şemasını döner; rota katmanı
-    kendi çıktı modeline dönüştürür."""
+    kendi çıktı modeline dönüştürür.
+
+    expand[] alanları tek tek verilmezse HF yalnızca id/_id/trendingScore döner —
+    ihtiyaç duyulan her alan (safetensors dahil, boyut tahmini için) açıkça istenir.
+    """
     client_kwargs: dict = {"timeout": httpx.Timeout(20)}
     if transport is not None:
         client_kwargs["transport"] = transport
-    params: dict[str, str | int] = {"sort": "downloads", "direction": -1, "limit": limit}
+    params: list[tuple[str, str | int]] = [
+        ("sort", "downloads"),
+        ("direction", -1),
+        ("limit", limit),
+    ]
     if query:
-        params["search"] = query
+        params.append(("search", query))
     if pipeline_tag:
-        params["pipeline_tag"] = pipeline_tag
+        params.append(("pipeline_tag", pipeline_tag))
+    for field in (
+        "safetensors",
+        "pipeline_tag",
+        "downloads",
+        "likes",
+        "tags",
+        "library_name",
+        "gated",
+    ):
+        params.append(("expand[]", field))
     async with httpx.AsyncClient(**client_kwargs) as client:
         resp = await client.get("https://huggingface.co/api/models", params=params)
     if resp.status_code != 200:

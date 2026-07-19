@@ -20,6 +20,7 @@ from studio_core.db import session_scope
 from studio_core.models import Download
 from studio_models.downloader import (
     DownloadError,
+    estimate_safetensors_bytes,
     hf_list_repo_files,
     hf_resolve_url,
     hf_search_models,
@@ -72,6 +73,12 @@ class HfModelOut(BaseModel):
     likes: int = 0
     license: str = ""
     gated: bool = False
+    size_bytes: int = 0  # yaklaşık — yalnız safetensors metadata'sı olan modellerde dolu
+
+
+class HfFileOut(BaseModel):
+    filename: str
+    size: int
 
 
 def _bad_request(message: str):
@@ -147,6 +154,7 @@ async def search_hf_models(
         license_tag = next(
             (t.removeprefix("license:") for t in m.get("tags", []) if t.startswith("license:")), ""
         )
+        safetensors = m.get("safetensors")
         out.append(
             HfModelOut(
                 id=m["id"],
@@ -156,19 +164,21 @@ async def search_hf_models(
                 likes=m.get("likes", 0),
                 license=license_tag,
                 gated=bool(m.get("gated", False)),
+                size_bytes=estimate_safetensors_bytes(safetensors) if safetensors else 0,
             )
         )
     return out
 
 
 @router.get("/files")
-async def list_hf_repo_files(repo_id: str) -> list[str]:
-    """Bir HF repo'sunun dosya listesi — Keşfet panelinde tek dosya mı yoksa tüm
-    repo'yu mu (snapshot) indireceğine karar vermek için kullanılır."""
+async def list_hf_repo_files(repo_id: str) -> list[HfFileOut]:
+    """Bir HF repo'sunun dosya listesi (ad + boyut) — Keşfet panelinde tek dosya mı
+    yoksa tüm repo'yu mu (snapshot) indireceğine karar vermek için kullanılır."""
     try:
-        return await hf_list_repo_files(repo_id, transport=manager._transport)
+        files = await hf_list_repo_files(repo_id, transport=manager._transport)
     except (DownloadError, httpx.HTTPError) as exc:
         _bad_request(str(exc))
+    return [HfFileOut(**f) for f in files]
 
 
 @router.post("/snapshot")
@@ -187,7 +197,9 @@ async def create_snapshot_download(req: SnapshotRequest) -> list[DownloadOut]:
     except (DownloadError, httpx.HTTPError) as exc:
         _bad_request(str(exc))
 
-    filenames = [f for f in all_files if not f.endswith((".gitattributes", ".md"))]
+    filenames = [
+        f["filename"] for f in all_files if not f["filename"].endswith((".gitattributes", ".md"))
+    ]
     if not filenames:
         _bad_request("repo'da indirilecek dosya bulunamadı")
     if any("/" in f for f in filenames):
