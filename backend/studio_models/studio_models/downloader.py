@@ -257,3 +257,21 @@ manager = DownloadManager()
 def hf_resolve_url(repo_id: str, filename: str, revision: str = "main") -> str:
     """Hugging Face Hub dosya URL'i. Token gerekiyorsa Authorization header'ı eklenir."""
     return f"https://huggingface.co/{repo_id}/resolve/{revision}/{filename}"
+
+
+async def hf_list_repo_files(
+    repo_id: str, transport: httpx.AsyncBaseTransport | None = None
+) -> list[str]:
+    """HF repo'sundaki dosya adlarını döner (çok dosyalı snapshot indirmeleri için).
+
+    transport parametresi, tek-dosya indirme motoruyla aynı test enjeksiyon noktasını
+    paylaşır — testlerde manager._transport (ASGITransport) buraya da verilir.
+    """
+    client_kwargs: dict = {"timeout": httpx.Timeout(20)}
+    if transport is not None:
+        client_kwargs["transport"] = transport
+    async with httpx.AsyncClient(**client_kwargs) as client:
+        resp = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+    if resp.status_code != 200:
+        raise DownloadError(f"HF repo bulunamadı: {repo_id!r} ({resp.status_code})")
+    return [s["rfilename"] for s in resp.json().get("siblings", [])]

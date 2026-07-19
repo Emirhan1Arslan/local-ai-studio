@@ -201,6 +201,26 @@ def test_adjust_no_params_is_noop(tmp_path):
     assert Image.open(out).getpixel((5, 5)) == (77, 88, 99)
 
 
+def test_resolve_repo_uses_parent_when_config_json_present(tmp_path):
+    from studio_inference.adapters.imgtool import _resolve_repo
+
+    snap = tmp_path / "BiRefNet"
+    snap.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    weight = snap / "model.safetensors"
+    weight.write_bytes(b"x")
+    assert _resolve_repo(str(weight)) == str(snap)
+
+
+def test_resolve_repo_keeps_single_file_and_hf_repo_id(tmp_path):
+    from studio_inference.adapters.imgtool import _resolve_repo
+
+    lone = tmp_path / "model.safetensors"
+    lone.write_bytes(b"x")
+    assert _resolve_repo(str(lone)) == str(lone)
+    assert _resolve_repo("ZhengPeng7/BiRefNet") == "ZhengPeng7/BiRefNet"
+
+
 def test_make_hocr_contains_bbox_text_and_escapes_html():
     from studio_inference.adapters.imgtool import _make_hocr
 

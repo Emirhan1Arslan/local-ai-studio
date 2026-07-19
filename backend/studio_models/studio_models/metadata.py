@@ -161,9 +161,10 @@ def extract(path: Path, models_root: Path) -> dict[str, Any]:
     except (ValueError, OSError, json.JSONDecodeError, struct.error) as exc:
         meta = {"error": f"metadata okunamadı: {exc}"}
     name = path.stem
-    # diffusers klasör düzeni (config.json + diffusion_pytorch_model.safetensors):
-    # anlamlı ad dosyada değil klasördedir
-    if name.startswith("diffusion_pytorch_model") and path.parent != models_root:
+    # transformers/diffusers klasör düzeni (config.json + ağırlık dosyası bir arada):
+    # anlamlı ad tek başına dosyada değil, çok dosyalı snapshot'ın klasöründedir
+    # (ör. ControlNet, ya da Faz 5 araçlarının HF repo indirmeleri — bkz. /v1/downloads/snapshot)
+    if path.parent != models_root and (path.parent / "config.json").exists():
         name = path.parent.name
     return {
         "name": name,

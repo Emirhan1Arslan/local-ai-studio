@@ -261,6 +261,25 @@ export async function createDownload(request: DownloadRequest): Promise<Download
   return r.json();
 }
 
+export interface SnapshotRequest {
+  repo_id: string;
+  subdir: string;
+  revision?: string;
+}
+
+export async function createSnapshotDownload(request: SnapshotRequest): Promise<DownloadInfo[]> {
+  const r = await req("/v1/downloads/snapshot", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `snapshot ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function downloadAction(
   id: string,
   action: "pause" | "resume" | "cancel",

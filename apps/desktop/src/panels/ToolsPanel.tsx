@@ -135,6 +135,49 @@ function BoxPicker({
   );
 }
 
+/** Model Browser'dan seç + "elle gir…" ile serbest HF repo id/yol — Model Browser'a
+ * henüz indirilmemiş varsayılan modeller (BiRefNet, Florence-2, SAM, Grounding DINO)
+ * için de çalışır; boş bırakılırsa adapter'ın kendi varsayılanı kullanılır. */
+function ModelPick({
+  models,
+  pick,
+  onPick,
+  custom,
+  onCustom,
+  placeholder,
+  emptyLabel,
+}: {
+  models: ModelInfo[];
+  pick: string;
+  onPick: (v: string) => void;
+  custom: string;
+  onCustom: (v: string) => void;
+  placeholder: string;
+  emptyLabel: string;
+}) {
+  return (
+    <>
+      <select value={pick} onChange={(e) => onPick(e.target.value)}>
+        <option value="">{emptyLabel}</option>
+        {models.map((m) => (
+          <option key={m.id} value={m.path}>
+            {m.name}
+          </option>
+        ))}
+        <option value="__custom">elle gir…</option>
+      </select>
+      {pick === "__custom" && (
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={custom}
+          onChange={(e) => onCustom(e.target.value)}
+        />
+      )}
+    </>
+  );
+}
+
 /** Tıklayarak ön plan noktaları işaretleme — segment(point) için. */
 function PointPicker({
   src,
@@ -185,10 +228,19 @@ export default function ToolsPanel() {
   const [faceModels, setFaceModels] = useState<ModelInfo[]>([]);
   const [faceModel, setFaceModel] = useState("");
   const [faceWeight, setFaceWeight] = useState(0.5);
-  const [bgModel, setBgModel] = useState("");
-  const [captionModel, setCaptionModel] = useState("");
+  const [bgModels, setBgModels] = useState<ModelInfo[]>([]);
+  const [bgPick, setBgPick] = useState("");
+  const [bgCustom, setBgCustom] = useState("");
+  const [captionModels, setCaptionModels] = useState<ModelInfo[]>([]);
+  const [captionPick, setCaptionPick] = useState("");
+  const [captionCustom, setCaptionCustom] = useState("");
   const [captionTask, setCaptionTask] = useState("short");
   const [ocrLangs, setOcrLangs] = useState("en");
+  const [segModels, setSegModels] = useState<ModelInfo[]>([]);
+  const [samPick, setSamPick] = useState("");
+  const [samCustom, setSamCustom] = useState("");
+  const [dinoPick, setDinoPick] = useState("");
+  const [dinoCustom, setDinoCustom] = useState("");
   const [segMode, setSegMode] = useState<SegMode>("text");
   const [segText, setSegText] = useState("");
   const [segBox, setSegBox] = useState<Box | null>(null);
@@ -219,6 +271,9 @@ export default function ToolsPanel() {
     if (!connected) return;
     fetchModels("upscale").then(setUpscaleModels).catch(() => setUpscaleModels([]));
     fetchModels("face_restoration").then(setFaceModels).catch(() => setFaceModels([]));
+    fetchModels("background_removal").then(setBgModels).catch(() => setBgModels([]));
+    fetchModels("captioning").then(setCaptionModels).catch(() => setCaptionModels([]));
+    fetchModels("segmentation").then(setSegModels).catch(() => setSegModels([]));
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
@@ -270,6 +325,7 @@ export default function ToolsPanel() {
     }
     const params: Record<string, unknown> = { op, image_path: source.path };
     if (source.assetId) params.parent_asset_id = source.assetId;
+    const bgModel = bgPick === "__custom" ? bgCustom.trim() : bgPick;
     if (op === "bg_remove" && bgModel) params.model_path = bgModel;
     if (op === "upscale") {
       if (!upscaleModel) {
@@ -278,6 +334,7 @@ export default function ToolsPanel() {
       }
       params.model_path = upscaleModel;
     }
+    const captionModel = captionPick === "__custom" ? captionCustom.trim() : captionPick;
     if (op === "caption") {
       params.task = captionTask;
       if (captionModel) params.model_path = captionModel;
@@ -288,6 +345,10 @@ export default function ToolsPanel() {
     if (op === "segment") {
       params.mode = segMode;
       params.cutout = segCutout;
+      const samModel = samPick === "__custom" ? samCustom.trim() : samPick;
+      const dinoModel = dinoPick === "__custom" ? dinoCustom.trim() : dinoPick;
+      if (samModel) params.sam_model = samModel;
+      if (dinoModel) params.dino_model = dinoModel;
       if (segMode === "text") {
         if (!segText.trim()) {
           setFormError('metin girin (ör. "kırmızı araba")');
@@ -383,11 +444,14 @@ export default function ToolsPanel() {
 
         {op === "bg_remove" && (
           <div className="dl-row">
-            <input
-              type="text"
-              placeholder="model (opsiyonel — varsayılan: ZhengPeng7/BiRefNet)"
-              value={bgModel}
-              onChange={(e) => setBgModel(e.target.value)}
+            <ModelPick
+              models={bgModels}
+              pick={bgPick}
+              onPick={setBgPick}
+              custom={bgCustom}
+              onCustom={setBgCustom}
+              placeholder="HF repo id (ör. ZhengPeng7/BiRefNet)"
+              emptyLabel="varsayılan: ZhengPeng7/BiRefNet"
             />
           </div>
         )}
@@ -414,11 +478,14 @@ export default function ToolsPanel() {
               <option value="detailed">detaylı açıklama</option>
               <option value="objects">nesne tespiti</option>
             </select>
-            <input
-              type="text"
-              placeholder="model (opsiyonel — varsayılan: microsoft/Florence-2-base)"
-              value={captionModel}
-              onChange={(e) => setCaptionModel(e.target.value)}
+            <ModelPick
+              models={captionModels}
+              pick={captionPick}
+              onPick={setCaptionPick}
+              custom={captionCustom}
+              onCustom={setCaptionCustom}
+              placeholder="HF repo id (ör. microsoft/Florence-2-base)"
+              emptyLabel="varsayılan: microsoft/Florence-2-base"
             />
           </div>
         )}
@@ -451,15 +518,41 @@ export default function ToolsPanel() {
                 kesim (RGBA) de üret
               </label>
             </div>
+            <div className="dl-row">
+              <span className="muted">SAM</span>
+              <ModelPick
+                models={segModels}
+                pick={samPick}
+                onPick={setSamPick}
+                custom={samCustom}
+                onCustom={setSamCustom}
+                placeholder="HF repo id (ör. facebook/sam-vit-base)"
+                emptyLabel="varsayılan: facebook/sam-vit-base"
+              />
+            </div>
             {segMode === "text" && (
-              <div className="dl-row">
-                <input
-                  type="text"
-                  placeholder='ör. "kırmızı araba"'
-                  value={segText}
-                  onChange={(e) => setSegText(e.target.value)}
-                />
-              </div>
+              <>
+                <div className="dl-row">
+                  <span className="muted">Grounding DINO</span>
+                  <ModelPick
+                    models={segModels}
+                    pick={dinoPick}
+                    onPick={setDinoPick}
+                    custom={dinoCustom}
+                    onCustom={setDinoCustom}
+                    placeholder="HF repo id (ör. IDEA-Research/grounding-dino-tiny)"
+                    emptyLabel="varsayılan: IDEA-Research/grounding-dino-tiny"
+                  />
+                </div>
+                <div className="dl-row">
+                  <input
+                    type="text"
+                    placeholder='ör. "kırmızı araba"'
+                    value={segText}
+                    onChange={(e) => setSegText(e.target.value)}
+                  />
+                </div>
+              </>
             )}
             {segMode === "box" && source && (
               <BoxPicker src={source.url} box={segBox} onChange={setSegBox} />

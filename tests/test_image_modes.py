@@ -119,11 +119,41 @@ def test_extract_names_diffusers_dir_after_folder(tmp_path):
     root = tmp_path / "models"
     sub = root / "controlnet" / "canny-sdxl"
     sub.mkdir(parents=True)
+    (sub / "config.json").write_text("{}", encoding="utf-8")
     p = sub / "diffusion_pytorch_model.safetensors"
     write_fake_safetensors(p)
     data = extract(p, root)
     assert data["name"] == "canny-sdxl"  # ad dosyadan değil klasörden
     assert data["kind"] == "controlnet"
+
+
+def test_extract_names_any_snapshot_dir_with_config_json(tmp_path):
+    """Genel kural: config.json'lı HERHANGİ bir klasördeki ağırlık dosyası klasör
+    adını alır (Faz 5: BiRefNet/Florence-2/SAM/Grounding DINO snapshot indirmeleri)."""
+    from studio_models.metadata import extract
+
+    root = tmp_path / "models"
+    sub = root / "background_removal" / "BiRefNet"
+    sub.mkdir(parents=True)
+    (sub / "config.json").write_text("{}", encoding="utf-8")
+    p = sub / "model.safetensors"
+    write_fake_safetensors(p)
+    data = extract(p, root)
+    assert data["name"] == "BiRefNet"
+    assert data["kind"] == "background_removal"
+
+
+def test_extract_keeps_filename_without_config_json(tmp_path):
+    """config.json yoksa (tek dosya checkpoint) ad dosyadan gelmeye devam eder."""
+    from studio_models.metadata import extract
+
+    root = tmp_path / "models"
+    sub = root / "upscale"
+    sub.mkdir(parents=True)
+    p = sub / "RealESRGAN_x4plus.safetensors"
+    write_fake_safetensors(p)
+    data = extract(p, root)
+    assert data["name"] == "RealESRGAN_x4plus"
 
 
 def test_asset_parent_link(client, tmp_path):

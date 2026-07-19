@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createDownload,
+  createSnapshotDownload,
   downloadAction,
   fetchDownloads,
   type DownloadInfo,
@@ -42,9 +43,11 @@ export default function DownloadsPanel() {
   const [url, setUrl] = useState("");
   const [repoId, setRepoId] = useState("");
   const [filename, setFilename] = useState("");
+  const [snapshot, setSnapshot] = useState(false);
   const [subdir, setSubdir] = useState("llm");
   const [sha, setSha] = useState("");
   const [formError, setFormError] = useState("");
+  const [formStatus, setFormStatus] = useState("");
   const lastEvent = useRef(0);
 
   const refresh = () => fetchDownloads().then(setRows).catch(() => setRows([]));
@@ -81,12 +84,18 @@ export default function DownloadsPanel() {
   const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     setFormError("");
+    setFormStatus("");
     try {
-      await createDownload(
-        mode === "hf"
-          ? { repo_id: repoId, filename, subdir, sha256: sha || undefined }
-          : { url, filename: filename || undefined, subdir, sha256: sha || undefined },
-      );
+      if (mode === "hf" && snapshot) {
+        const rows = await createSnapshotDownload({ repo_id: repoId, subdir });
+        setFormStatus(`${rows.length} dosya kuyruğa alındı`);
+      } else {
+        await createDownload(
+          mode === "hf"
+            ? { repo_id: repoId, filename, subdir, sha256: sha || undefined }
+            : { url, filename: filename || undefined, subdir, sha256: sha || undefined },
+        );
+      }
       setUrl("");
       setSha("");
       refresh();
@@ -125,31 +134,48 @@ export default function DownloadsPanel() {
             required
           />
         ) : (
-          <div className="dl-row">
-            <input
-              placeholder="repo_id (ör. TheBloke/Qwen-7B-GGUF)"
-              value={repoId}
-              onChange={(e) => setRepoId(e.target.value)}
-              required
-            />
-            <input
-              placeholder="dosya adı (ör. model.q4_k_m.gguf)"
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              required
-            />
-          </div>
+          <>
+            <div className="dl-row">
+              <input
+                placeholder="repo_id (ör. TheBloke/Qwen-7B-GGUF)"
+                value={repoId}
+                onChange={(e) => setRepoId(e.target.value)}
+                required
+              />
+              {!snapshot && (
+                <input
+                  placeholder="dosya adı (ör. model.q4_k_m.gguf)"
+                  value={filename}
+                  onChange={(e) => setFilename(e.target.value)}
+                  required
+                />
+              )}
+            </div>
+            <div className="dl-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={snapshot}
+                  onChange={(e) => setSnapshot(e.target.checked)}
+                />{" "}
+                tüm repo (birden fazla dosyalı model — ör. BiRefNet, Florence-2, SAM)
+              </label>
+            </div>
+          </>
         )}
         <div className="dl-row">
-          <input
-            placeholder="sha256 (opsiyonel doğrulama)"
-            value={sha}
-            onChange={(e) => setSha(e.target.value)}
-          />
+          {!(mode === "hf" && snapshot) && (
+            <input
+              placeholder="sha256 (opsiyonel doğrulama)"
+              value={sha}
+              onChange={(e) => setSha(e.target.value)}
+            />
+          )}
           <button type="submit" disabled={!connected}>
             İndir
           </button>
         </div>
+        {formStatus && <p className="ok-text">{formStatus}</p>}
         {formError && <p className="err-text">{formError}</p>}
       </form>
 

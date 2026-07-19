@@ -32,6 +32,7 @@ params:
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -76,6 +77,17 @@ def _make_hocr(items: list[dict], width: int, height: int) -> str:
         f'<span class="ocr_line" id="line_1">{body}</span></p></div>\n'
         "</div>\n</body>\n</html>\n"
     )
+
+
+def _resolve_repo(path_or_repo: str) -> str:
+    """Model Browser'da kayıtlı bir snapshot klasöründeki ağırlık dosyası verilmişse
+    (yanında config.json varsa) from_pretrained için üst klasöre döner; tek dosya yol
+    ya da HF repo id'si olduğu gibi kullanılır (bkz. /v1/downloads/snapshot)."""
+    p = str(path_or_repo)
+    parent = os.path.dirname(p)
+    if parent and os.path.exists(os.path.join(parent, "config.json")):
+        return parent
+    return p
 
 
 def _import_error(hint: str, exc: ImportError) -> RuntimeError:
@@ -131,7 +143,9 @@ class ImgToolAdapter:
         except ImportError as exc:
             raise _import_error("torch/transformers bulunamadı", exc) from exc
 
-        model = AutoModelForImageSegmentation.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModelForImageSegmentation.from_pretrained(
+            _resolve_repo(model_path), trust_remote_code=True
+        )
         model.eval()
         if torch.cuda.is_available():
             model.to("cuda")
@@ -237,11 +251,12 @@ class ImgToolAdapter:
         except ImportError as exc:
             raise _import_error("torch/transformers bulunamadı", exc) from exc
 
+        repo = _resolve_repo(model_path)
         dtype = torch.float16 if torch.cuda.is_available() else torch.float32
         model = AutoModelForCausalLM.from_pretrained(
-            model_path, trust_remote_code=True, torch_dtype=dtype
+            repo, trust_remote_code=True, torch_dtype=dtype
         )
-        processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
         model.eval()
         if torch.cuda.is_available():
             model.to("cuda")
@@ -364,8 +379,9 @@ class ImgToolAdapter:
         except ImportError as exc:
             raise _import_error("torch/transformers bulunamadı", exc) from exc
 
-        model = SamModel.from_pretrained(model_path)
-        processor = SamProcessor.from_pretrained(model_path)
+        repo = _resolve_repo(model_path)
+        model = SamModel.from_pretrained(repo)
+        processor = SamProcessor.from_pretrained(repo)
         model.eval()
         if torch.cuda.is_available():
             model.to("cuda")
@@ -383,8 +399,9 @@ class ImgToolAdapter:
         except ImportError as exc:
             raise _import_error("torch/transformers bulunamadı", exc) from exc
 
-        model = AutoModelForZeroShotObjectDetection.from_pretrained(model_path)
-        processor = AutoProcessor.from_pretrained(model_path)
+        repo = _resolve_repo(model_path)
+        model = AutoModelForZeroShotObjectDetection.from_pretrained(repo)
+        processor = AutoProcessor.from_pretrained(repo)
         model.eval()
         if torch.cuda.is_available():
             model.to("cuda")

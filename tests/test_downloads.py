@@ -20,11 +20,41 @@ DATA = bytes(range(256)) * 512  # 128 KB deterministik veri
 SHA = hashlib.sha256(DATA).hexdigest()
 
 
+SNAPSHOT_FILES = ["config.json", "model.safetensors", "preprocessor_config.json"]
+
+
 async def fake_server(scope, receive, send):
-    """/file: Range destekli · /slow: parça parça yavaş akış · /norange: Range'i yok sayar."""
+    """/file: Range destekli · /slow: parça parça yavaş akış · /norange: Range'i yok sayar ·
+    /api/models/<repo>: HF repo dosya listesi (snapshot indirme testleri için)."""
     assert scope["type"] == "http"
     path = scope["path"]
     headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+
+    if path.startswith("/api/models/"):
+        import json
+
+        repo = path.removeprefix("/api/models/")
+        if repo == "yok/repo":
+            body = b"{}"
+            status = 404
+        else:
+            siblings = [{"rfilename": f} for f in SNAPSHOT_FILES]
+            if repo == "nested/repo":
+                siblings = [{"rfilename": "onnx/model.onnx"}]
+            elif repo == "empty/repo":
+                siblings = []
+            body = json.dumps({"siblings": siblings}).encode()
+            status = 200
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+        return
+
     body = DATA
     status = 200
     resp_headers = [(b"content-type", b"application/octet-stream")]
@@ -140,6 +170,56 @@ def test_pause_then_resume(dl_client):
 def test_invalid_subdir_rejected(dl_client):
     r = dl_client.post(
         "/v1/downloads", json={"url": "http://fake/file", "subdir": "hack", "filename": "x.bin"}
+    )
+    assert r.status_code == 400
+
+
+def test_snapshot_download_queues_all_files(dl_client):
+    """Faz 5: çok dosyalı HF repo'su tek istekte kuyruğa alınır, hepsi aynı repo
+    klasörüne iner (BiRefNet/Florence-2/SAM gibi tek-dosya olmayan modeller)."""
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "org/some-repo", "subdir": "captioning"}
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == len(SNAPSHOT_FILES)
+    dest_names = {Path(row["dest_path"]).name for row in rows}
+    assert dest_names == set(SNAPSHOT_FILES)
+    for row in rows:
+        p = Path(row["dest_path"])
+        assert p.parent.name == "some-repo"
+        assert p.parent.parent.name == "captioning"
+
+    for row in rows:
+        d = _poll(dl_client, row["id"], {"done", "failed"})
+        assert d["status"] == "done", d["error"]
+        assert Path(d["dest_path"]).read_bytes() == DATA
+
+
+def test_snapshot_download_repo_not_found(dl_client):
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "yok/repo", "subdir": "captioning"}
+    )
+    assert r.status_code == 400
+
+
+def test_snapshot_download_empty_repo_rejected(dl_client):
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "empty/repo", "subdir": "captioning"}
+    )
+    assert r.status_code == 400
+
+
+def test_snapshot_download_nested_files_rejected(dl_client):
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "nested/repo", "subdir": "captioning"}
+    )
+    assert r.status_code == 400
+
+
+def test_snapshot_download_invalid_subdir_rejected(dl_client):
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "org/some-repo", "subdir": "hack"}
     )
     assert r.status_code == 400
 
