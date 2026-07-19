@@ -119,9 +119,12 @@ def test_same_folder_multi_weight_collapses_to_one_model(client):
     assert models[0]["name"] == "MyTTS"
 
 
-def test_independent_assets_in_subfolder_stay_separate(client):
-    """Kokoro'nun voices/ deseni: config.json'sız bir alt klasördeki her dosya
-    bağımsız bir varlık olarak kalmalı (ör. seçilebilir ayrı ses profilleri)."""
+def test_subfolder_without_own_config_still_joins_parent_model(client):
+    """Kokoro'nun voices/ deseni: config.json'suz bir alt klasördeki dosyalar
+    (ör. ses paketleri) da üst modelin (config.json'lı en yakın ata) parçası
+    sayılmalı — kullanıcı geri bildirimi: 'kokoro ses dosyaları da kokora
+    modeline ait ya'. Tek istisna: üst klasörlerden biri model_index.json
+    içeriyorsa (çok bileşenli pipeline) o kök öncelikli kalır."""
     root = _models_dir(client)
     core = root / "tts" / "MyKokoro"
     core.mkdir(parents=True)
@@ -133,5 +136,23 @@ def test_independent_assets_in_subfolder_stay_separate(client):
     write_fake_safetensors(voices / "voice_b.safetensors")
 
     client.post("/v1/models/rescan")
-    names = {m["name"] for m in client.get("/v1/models", params={"kind": "tts"}).json()}
-    assert names == {"MyKokoro", "voice_a", "voice_b"}
+    models = client.get("/v1/models", params={"kind": "tts"}).json()
+    assert len(models) == 1
+    assert models[0]["name"] == "MyKokoro"
+    assert set(models[0]["meta"]["components"]) == {
+        "core.safetensors",
+        "voice_a.safetensors",
+        "voice_b.safetensors",
+    }
+
+
+def test_unrelated_top_level_files_stay_separate(client):
+    """config.json/model_index.json ile hiç ilişkisi olmayan, kendi başına
+    duran dosyalar (ör. lora/'daki tek bir LoRA) ayrı ayrı kalmaya devam eder."""
+    root = _models_dir(client)
+    write_fake_safetensors(root / "lora" / "lora-a.safetensors")
+    write_fake_safetensors(root / "lora" / "lora-b.safetensors")
+
+    client.post("/v1/models/rescan")
+    names = {m["name"] for m in client.get("/v1/models", params={"kind": "lora"}).json()}
+    assert names == {"lora-a", "lora-b"}

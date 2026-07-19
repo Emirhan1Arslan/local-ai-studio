@@ -147,13 +147,19 @@ def classify(path: Path, models_root: Path) -> str:
 
 
 def group_key(path: Path, models_root: Path) -> str:
-    """path'in ait olduğu mantıksal model grubunun anahtarını bulur — birden çok
-    ağırlık dosyası tek bir model olarak birleştirilecekse (çok bileşenli bir
-    diffusers pipeline'ı: model_index.json + transformer/vae/text_encoder alt
-    klasörleri, bazıları parçalı; ya da tek klasörde birden çok ağırlık dosyası:
-    XTTS-v2'nin model.pth + speakers_xtts.pth'i) grup anahtarı o klasördür.
-    Aksi halde (ör. Kokoro'nun voices/*.pt ses paketleri — her biri bağımsız
-    kullanılabilir bir varlık) dosyanın kendisi kendi grubudur."""
+    """path'in ait olduğu mantıksal model grubunun anahtarını bulur.
+
+    1) Üst klasörlerden HERHANGİ birinde model_index.json varsa (çok bileşenli
+       bir diffusers pipeline'ı — LTX-Video gibi) o kök kazanır; iç bileşenlerin
+       (ör. text_encoder/) kendi config.json'u olsa bile öncelik pipeline
+       kökündedir.
+    2) Aksi halde, config.json'lı EN ÜST (models_root'a en yakın) ata klasör
+       kök olur — böylece Kokoro-82M/voices/*.pt gibi alt klasörlerdeki dosyalar
+       da (kendi config.json'ları olmasa bile) asıl modele dahil olur; XTTS-v2'nin
+       model.pth + speakers_xtts.pth'i gibi aynı klasördeki birden çok ağırlık
+       dosyası da böylece birleşir.
+    3) İkisi de yoksa dosyanın kendisi kendi grubudur (ör. lora/'daki tek
+       başına bir LoRA dosyası)."""
     d = path.parent
     cur = d
     while True:
@@ -166,8 +172,22 @@ def group_key(path: Path, models_root: Path) -> str:
         if cur == models_root:
             break
         cur = cur.parent
-    if d != models_root and (d / "config.json").exists():
-        return str(d)
+
+    cur = d
+    best: Path | None = None
+    while True:
+        try:
+            cur.relative_to(models_root)
+        except ValueError:
+            break
+        if cur != models_root and (cur / "config.json").exists():
+            best = cur
+        if cur == models_root:
+            break
+        cur = cur.parent
+    if best is not None:
+        return str(best)
+
     return str(path)
 
 
