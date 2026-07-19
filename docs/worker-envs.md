@@ -91,3 +91,42 @@ uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe gfpgan
   Model Browser'dan `models/face_restoration/` altına indirilir; facexlib'in
   yüz tespit/hizalama modelleri ise kendi paket-içi varsayılan önbelleğine
   otomatik iner (Model Manager'ın dışında — bilinen kapsam dışı bırakma).
+
+## Faz 6 — llm env (envs/llm, AYRI venv — torch/diffusers gerektirmez)
+
+```bash
+uv venv ~/LocalAIStudio/envs/llm \
+  --python "C:\Users\Tars\AppData\Local\Programs\Python\Python310\python.exe" \
+  --system-site-packages
+uv pip install --python ~/LocalAIStudio/envs/llm/Scripts/python.exe \
+  llama-cpp-python --prefer-binary \
+  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+```
+
+**Neden `--extra-index-url` gerekiyor:** `pip install llama-cpp-python` PyPI'da bu
+platform için hazır wheel bulamayıp 71 MB'lık kaynak dağıtımını indiriyor; onu
+açarken llama.cpp'nin gömülü web arayüzünün derin dizin yapısı Windows'un 260
+karakter yol sınırına takılıyor (`LongPathsEnabled` sistem ayarını değiştirmeden
+çözülemez — bilinçli olarak dokunulmadı). abetlen'in kendi paket indeksindeki
+**hazır CUDA wheel'i** (536 MB, cu124) bu sorunu tamamen atlıyor.
+
+**RTX 5090 (compute capability 12.0, Blackwell) uyumluluğu:** cu124 wheel'i
+50-serisi çıkmadan derlenmiş olsa da `ggml-cuda.dll` (946 MB, çoklu SM hedefi
+içeriyor) canlı testte GPU'yu doğru tanıdı: `ggml_cuda_init: found 1 CUDA
+devices ... RTX 5090, compute capability 12.0, VRAM: 32606 MiB`.
+
+**DLL yükleme sorunu ve çözümü:** wheel'in CUDA çalışma zamanı DLL'leri
+(cudart64_12.dll, cublas64_12.dll, cublasLt64_12.dll) sistemde ayrıca kurulu
+değil (CUDA toolkit kurulmadı — nvcc yok). llama.cpp'nin kendi yükleyicisi
+`os.add_dll_directory()` ile eklenen yolları onurlandırmıyor (winmode farkı);
+tek güvenilir çözüm gerçek `PATH` ortam değişkenine eklemek. Adapter bunu
+`import torch` ile (zaten `--system-site-packages` sayesinde görülüyor, YENİDEN
+KURULMUYOR) torch'un kendi cu128 DLL'lerinin konumunu bulup PATH'e ekleyerek
+yapıyor — bkz. `llm.py::_ensure_loaded`. torch 12.x ailesi ABI uyumlu olduğu
+için cu124 ile derlenmiş llama.cpp, torch'un cu128 çalışma zamanı DLL'leriyle
+sorunsuz çalışıyor.
+
+- Sohbet şablonu: GGUF'un gömülü `tokenizer.chat_template`'i llama.cpp
+  tarafından otomatik algılanıyor (`chat_format` parametresi verilmiyor).
+- `n_gpu_layers=-1` (vars.): tüm katmanlar GPU'ya — 32 GB VRAM'de küçük/orta
+  GGUF modeller için sorunsuz.

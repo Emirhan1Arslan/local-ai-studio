@@ -308,7 +308,12 @@ class Scheduler:
                     continue
                 etype = event.get("event")
                 if etype == "progress":
-                    extra = {"preview": event["preview"]} if event.get("preview") else {}
+                    # Adapter'a özgü ek alanlar (preview: imgtool/sdxl, delta: llm token
+                    # akışı, …) olduğu gibi iletilir — yeni bir alan tipi eklemek burada
+                    # değişiklik gerektirmez.
+                    extra = {
+                        k: v for k, v in event.items() if k not in ("event", "value", "message")
+                    }
                     self._emit(
                         "job.progress",
                         id=job_id,

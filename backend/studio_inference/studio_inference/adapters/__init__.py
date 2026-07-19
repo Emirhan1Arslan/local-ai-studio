@@ -14,6 +14,7 @@ _REGISTRY: dict[str, str] = {
     "dummy": "studio_inference.adapters.dummy:DummyAdapter",
     "image": "studio_inference.adapters.sdxl:SdxlAdapter",
     "imgtool": "studio_inference.adapters.imgtool:ImgToolAdapter",
+    "llm": "studio_inference.adapters.llm:LlamaAdapter",
 }
 
 

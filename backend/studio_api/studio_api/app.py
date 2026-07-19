@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from studio_core import __version__ as core_version
 from studio_core.assets import register_asset_for_job
+from studio_core.chat import save_chat_message_for_job
 from studio_core.config import get_settings
 from studio_core.hardware import SystemInfo, get_system_info
 from studio_core.logging import get_logger, setup_logging
@@ -26,6 +27,7 @@ from studio_models.watcher import ModelWatcher
 
 from studio_api.bus import bus
 from studio_api.routes.assets import router as assets_router
+from studio_api.routes.chat import router as chat_router
 from studio_api.routes.downloads import router as downloads_router
 from studio_api.routes.jobs import router as jobs_router
 from studio_api.routes.models import router as models_router
@@ -83,9 +85,13 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(download_manager.recover)
         watcher = ModelWatcher(on_models_changed)
         watcher.start()
+        def on_job_done(job_id: str) -> None:
+            register_asset_for_job(job_id)
+            save_chat_message_for_job(job_id)
+
         scheduler._concurrency = settings.worker_concurrency
         scheduler.set_emit(bus.emit)
-        scheduler.set_on_done(register_asset_for_job)
+        scheduler.set_on_done(on_job_done)
         await scheduler.start()
         telemetry = TelemetryService(bus.emit, settings.telemetry_interval)
         telemetry.start()
@@ -114,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(assets_router, dependencies=[Depends(_check_token)])
     app.include_router(uploads_router, dependencies=[Depends(_check_token)])
     app.include_router(settings_router, dependencies=[Depends(_check_token)])
+    app.include_router(chat_router, dependencies=[Depends(_check_token)])
     # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
 

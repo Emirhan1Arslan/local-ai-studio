@@ -392,6 +392,75 @@ export async function createDiagnosticsBundle(): Promise<{ path: string }> {
   return r.json();
 }
 
+export interface ChatSessionInfo {
+  id: string;
+  title: string;
+  model_path: string;
+  system_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessageInfo {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export async function fetchChatSessions(): Promise<ChatSessionInfo[]> {
+  const r = await req("/v1/chat");
+  if (!r.ok) throw new Error(`chat sessions ${r.status}`);
+  return r.json();
+}
+
+export async function createChatSession(
+  modelPath: string,
+  title = "Yeni sohbet",
+  systemPrompt = "",
+): Promise<ChatSessionInfo> {
+  const r = await req("/v1/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_path: modelPath, title, system_prompt: systemPrompt }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `chat session ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function deleteChatSession(id: string): Promise<boolean> {
+  const r = await req(`/v1/chat/${id}`, { method: "DELETE" });
+  if (!r.ok) return false;
+  return (await r.json()).ok;
+}
+
+export async function fetchChatMessages(sessionId: string): Promise<ChatMessageInfo[]> {
+  const r = await req(`/v1/chat/${sessionId}/messages`);
+  if (!r.ok) throw new Error(`chat messages ${r.status}`);
+  return r.json();
+}
+
+export async function sendChatMessage(
+  sessionId: string,
+  content: string,
+  temperature = 0.7,
+  maxTokens = 1024,
+): Promise<{ job_id: string; user_message_id: string }> {
+  const r = await req(`/v1/chat/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, temperature, max_tokens: maxTokens }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `send message ${r.status}`);
+  }
+  return r.json();
+}
+
 export function openEventSocket(onEvent: (e: StudioEvent) => void): WebSocket {
   // Tauri kabuğu: sidecar adresi ws şemasına çevrilir + token sorgusu; dev: göreli.
   const wsBase = apiBase

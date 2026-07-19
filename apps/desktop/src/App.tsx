@@ -6,6 +6,7 @@ import {
   type IDockviewPanelProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
+import ChatPanel from "./panels/ChatPanel";
 import ConsolePanel from "./panels/ConsolePanel";
 import DownloadsPanel from "./panels/DownloadsPanel";
 import ExplorePanel from "./panels/ExplorePanel";
@@ -31,11 +32,13 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   generate: GeneratePanel,
   settings: SettingsPanel,
   tools: ToolsPanel,
+  chat: ChatPanel,
 };
 
 const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "generate", title: "Üretim", near: "models" },
   { id: "tools", title: "Araçlar", near: "generate" },
+  { id: "chat", title: "Sohbet", near: "generate" },
   { id: "downloads", title: "İndirmeler", near: "models" },
   { id: "explore", title: "Keşfet", near: "downloads" },
   { id: "queue", title: "Kuyruk", near: "models" },
