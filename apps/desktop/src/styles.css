@@ -101,6 +101,18 @@ table.models th { color: var(--muted); font-weight: 600; }
 .dl-bar { height: 6px; background: var(--bg); border-radius: 3px; margin-top: 8px; overflow: hidden; }
 .dl-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
 
+.dl-group { background: var(--panel); }
+.dl-expand {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; padding: 0 2px; flex: 0 0 auto;
+}
+.dl-expand:hover { color: var(--accent); }
+.dl-group-files {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 8px; padding-left: 18px; border-left: 2px solid var(--border);
+}
+.dl-item-nested { background: var(--bg); }
+
 /* Üretim paneli */
 .dl-form textarea {
   background: var(--bg); color: var(--text);
