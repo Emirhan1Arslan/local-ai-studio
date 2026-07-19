@@ -8,22 +8,27 @@ import {
 } from "../api";
 import { SUBDIRS } from "./DownloadsPanel";
 
-// [subdir ipucu, HF pipeline_tag, görünen ad] — subdir ipucu boşsa kullanıcı elle seçer
-const TASK_FILTERS: [string, string, string][] = [
-  ["", "", "tüm görevler"],
-  ["checkpoints", "text-to-image", "görüntü üretimi (checkpoint)"],
-  ["lora", "text-to-image", "LoRA"],
-  ["controlnet", "image-to-image", "ControlNet"],
-  ["background_removal", "image-segmentation", "arka plan kaldırma"],
-  ["upscale", "image-to-image", "upscale"],
-  ["captioning", "image-to-text", "caption"],
-  ["segmentation", "mask-generation", "segmentasyon"],
-  ["face_restoration", "image-to-image", "yüz onarma"],
-  ["llm", "text-generation", "LLM"],
-  ["embeddings", "feature-extraction", "embedding"],
-  ["tts", "text-to-speech", "TTS"],
-  ["stt", "automatic-speech-recognition", "STT"],
-];
+// Her models/ kategorisi için görünen ad + arama filtresinde kullanılacak HF pipeline_tag'i
+// (bazılarının net bir karşılığı yok — "" bırakılırsa arama yalnızca metinle çalışır).
+const CATEGORY_META: Record<string, { label: string; pipelineTag: string }> = {
+  llm: { label: "LLM", pipelineTag: "text-generation" },
+  checkpoints: { label: "checkpoint (genel)", pipelineTag: "text-to-image" },
+  image: { label: "görüntü üretimi", pipelineTag: "text-to-image" },
+  lora: { label: "LoRA", pipelineTag: "text-to-image" },
+  controlnet: { label: "ControlNet", pipelineTag: "image-to-image" },
+  vae: { label: "VAE", pipelineTag: "" },
+  video: { label: "video üretimi", pipelineTag: "text-to-video" },
+  "3d": { label: "3D üretim", pipelineTag: "image-to-3d" },
+  tts: { label: "TTS (metin→ses)", pipelineTag: "text-to-speech" },
+  stt: { label: "STT (ses→metin)", pipelineTag: "automatic-speech-recognition" },
+  ocr: { label: "OCR", pipelineTag: "" },
+  embeddings: { label: "embedding", pipelineTag: "feature-extraction" },
+  background_removal: { label: "arka plan kaldırma", pipelineTag: "image-segmentation" },
+  upscale: { label: "upscale", pipelineTag: "image-to-image" },
+  captioning: { label: "caption", pipelineTag: "image-to-text" },
+  segmentation: { label: "segmentasyon", pipelineTag: "mask-generation" },
+  face_restoration: { label: "yüz onarma", pipelineTag: "image-to-image" },
+};
 
 function fmtCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -33,34 +38,36 @@ function fmtCount(n: number): string {
 
 export default function ExplorePanel() {
   const [query, setQuery] = useState("");
-  const [taskIdx, setTaskIdx] = useState(0);
+  const [subdir, setSubdir] = useState("checkpoints");
+  const [noTaskFilter, setNoTaskFilter] = useState(false);
   const [results, setResults] = useState<HfModelInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [files, setFiles] = useState<string[]>([]);
   const [filesError, setFilesError] = useState("");
-  const [subdir, setSubdir] = useState("checkpoints");
   const [status, setStatus] = useState("");
   const debounceRef = useRef<number | undefined>(undefined);
 
+  const meta = CATEGORY_META[subdir];
+  const pipelineTag = noTaskFilter ? "" : meta?.pipelineTag ?? "";
+
+  // Kategori değişince arama SONUÇLARI da değişsin diye tek seçici hem filtreyi hem
+  // indirme hedefini birlikte sürüyor (önceden iki ayrı seçici vardı, biri arama
+  // sonucunu etkilemiyordu — kafa karıştırıcıydı).
   useEffect(() => {
     window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
       setLoading(true);
       setError("");
-      searchHfModels(query, TASK_FILTERS[taskIdx][1])
+      searchHfModels(query, pipelineTag)
         .then(setResults)
         .catch((e) => setError(e instanceof Error ? e.message : String(e)))
         .finally(() => setLoading(false));
     }, 400);
     return () => window.clearTimeout(debounceRef.current);
-  }, [query, taskIdx]);
-
-  useEffect(() => {
-    const hint = TASK_FILTERS[taskIdx][0];
-    if (hint) setSubdir(hint);
-  }, [taskIdx]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, pipelineTag]);
 
   const toggleExpand = async (id: string) => {
     if (expanded === id) {
@@ -108,24 +115,26 @@ export default function ExplorePanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <select value={taskIdx} onChange={(e) => setTaskIdx(Number(e.target.value))}>
-          {TASK_FILTERS.map(([, , label], i) => (
-            <option key={label} value={i}>
-              {label}
+        <select value={subdir} onChange={(e) => setSubdir(e.target.value)}>
+          {SUBDIRS.map((s) => (
+            <option key={s} value={s}>
+              {CATEGORY_META[s]?.label ?? s}
             </option>
           ))}
         </select>
       </div>
       <div className="dl-row">
-        <label className="gen-num">
-          hedef kategori{" "}
-          <select value={subdir} onChange={(e) => setSubdir(e.target.value)}>
-            {SUBDIRS.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={noTaskFilter}
+            onChange={(e) => setNoTaskFilter(e.target.checked)}
+          />{" "}
+          görev filtresi uygulama (yalnız metinle ara)
         </label>
-        <span className="muted">indirilenler bu klasöre iner (Model Browser'da orada görünür)</span>
+        <span className="muted">
+          indirilenler "{meta?.label ?? subdir}" klasörüne iner — Model Browser'da orada görünür
+        </span>
       </div>
       {status && <p className="ok-text">{status}</p>}
       {error && <p className="err-text">{error}</p>}
