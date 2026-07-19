@@ -23,6 +23,25 @@ const VOICES: [string, string][] = [
   ["bm_george", "George (erkek, B. İngilizcesi)"],
 ];
 
+// XTTS-v2 checkpoint'ine gömülü 58 hazır ses (klonlama gerekmez)
+const XTTS_PRESET_SPEAKERS: string[] = [
+  "Claribel Dervla", "Daisy Studious", "Gracie Wise", "Tammie Ema",
+  "Alison Dietlinde", "Ana Florence", "Annmarie Nele", "Asya Anara",
+  "Brenda Stern", "Gitta Nikolina", "Henriette Usha", "Sofia Hellen",
+  "Tammy Grit", "Tanja Adelina", "Vjollca Johnnie", "Andrew Chipper",
+  "Badr Odhiambo", "Dionisio Schuyler", "Royston Min", "Viktor Eka",
+  "Abrahan Mack", "Adde Michal", "Baldur Sanjin", "Craig Gutsy",
+  "Damien Black", "Gilberto Mathias", "Ilkin Urbano", "Kazuhiko Atallah",
+  "Ludvig Milivoj", "Suad Qasim", "Torcull Diarmuid", "Viktor Menelaos",
+  "Zacharie Aimilios", "Nova Hogarth", "Maja Ruoho", "Uta Obando",
+  "Lidiya Szekeres", "Chandra MacFarland", "Szofi Granger", "Camilla Holmström",
+  "Lilya Stainthorpe", "Zofija Kendrick", "Narelle Moon", "Barbora MacLean",
+  "Alexandra Hisakawa", "Alma María", "Rosemary Okafor", "Ige Behringer",
+  "Filip Traverse", "Damjan Chapman", "Wulf Carlevaro", "Aaron Dreschner",
+  "Kumar Dahl", "Eugenio Mataracı", "Ferran Simen", "Xavier Hayasaka",
+  "Luis Moray", "Marcos Rudaski",
+];
+
 // XTTS-v2'nin desteklediği diller (coqui-tts multilingual/multi-dataset/xtts_v2)
 const XTTS_LANGUAGES: [string, string][] = [
   ["tr", "Türkçe"],
@@ -65,6 +84,8 @@ export default function AudioPanel() {
   const [engine, setEngine] = useState<Engine>("kokoro");
   const [voice, setVoice] = useState("af_heart");
   const [speed, setSpeed] = useState(1.0);
+  const [xttsVoiceMode, setXttsVoiceMode] = useState<"preset" | "clone">("preset");
+  const [xttsPresetSpeaker, setXttsPresetSpeaker] = useState(XTTS_PRESET_SPEAKERS[0]);
   const [speakerFile, setSpeakerFile] = useState<{ path: string; name: string } | null>(null);
   const [xttsLanguage, setXttsLanguage] = useState("tr");
   const [consent, setConsent] = useState(false);
@@ -189,17 +210,21 @@ export default function AudioPanel() {
         params.lang_code = voice.startsWith("b") ? "b" : "a";
         params.speed = speed;
       } else {
-        if (!speakerFile) {
-          setFormError("klonlanacak bir referans ses dosyası yükleyin");
-          return;
-        }
-        if (!consent) {
-          setFormError("devam etmeden önce ses klonlama onayını işaretleyin");
-          return;
-        }
-        params.speaker_wav = speakerFile.path;
         params.language = xttsLanguage;
-        params.consent = true;
+        if (xttsVoiceMode === "preset") {
+          params.speaker = xttsPresetSpeaker;
+        } else {
+          if (!speakerFile) {
+            setFormError("klonlanacak bir referans ses dosyası yükleyin");
+            return;
+          }
+          if (!consent) {
+            setFormError("devam etmeden önce ses klonlama onayını işaretleyin");
+            return;
+          }
+          params.speaker_wav = speakerFile.path;
+          params.consent = true;
+        }
       }
     }
     try {
@@ -324,22 +349,68 @@ export default function AudioPanel() {
                   XTTS-v2 model ağırlıkları <strong>Coqui Public Model License (CPML)</strong>{" "}
                   ile dağıtılır — yalnızca ticari OLMAYAN kullanım içindir.
                 </p>
-                <div className="dl-row">
-                  <label className="file-pick">
-                    referans ses yükle (klonlanacak ses)…
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      onChange={(e) => e.target.files?.[0] && pickSpeakerFile(e.target.files[0])}
-                    />
-                  </label>
-                  {speakerFile && <span className="muted">{speakerFile.name}</span>}
-                  {speakerFile && (
-                    <button type="button" onClick={() => setSpeakerFile(null)}>
-                      kaldır
-                    </button>
-                  )}
+                <div className="mode-tabs">
+                  <button
+                    type="button"
+                    className={xttsVoiceMode === "preset" ? "active" : ""}
+                    onClick={() => setXttsVoiceMode("preset")}
+                  >
+                    hazır ses (klonlama yok)
+                  </button>
+                  <button
+                    type="button"
+                    className={xttsVoiceMode === "clone" ? "active" : ""}
+                    onClick={() => setXttsVoiceMode("clone")}
+                  >
+                    referans sesle klonla
+                  </button>
                 </div>
+
+                {xttsVoiceMode === "preset" ? (
+                  <div className="dl-row">
+                    <select
+                      value={xttsPresetSpeaker}
+                      onChange={(e) => setXttsPresetSpeaker(e.target.value)}
+                    >
+                      {XTTS_PRESET_SPEAKERS.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <>
+                    <div className="dl-row">
+                      <label className="file-pick">
+                        referans ses yükle (klonlanacak ses)…
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          onChange={(e) => e.target.files?.[0] && pickSpeakerFile(e.target.files[0])}
+                        />
+                      </label>
+                      {speakerFile && <span className="muted">{speakerFile.name}</span>}
+                      {speakerFile && (
+                        <button type="button" onClick={() => setSpeakerFile(null)}>
+                          kaldır
+                        </button>
+                      )}
+                    </div>
+                    <label className="dl-row consent-row">
+                      <input
+                        type="checkbox"
+                        checked={consent}
+                        onChange={(e) => setConsent(e.target.checked)}
+                      />
+                      <span>
+                        Yüklediğim referans sesin sahibi olduğumu veya sesini klonlamak için
+                        sahibinden açık izin aldığımı beyan ederim.
+                      </span>
+                    </label>
+                  </>
+                )}
+
                 <div className="dl-row">
                   <select value={xttsLanguage} onChange={(e) => setXttsLanguage(e.target.value)}>
                     {XTTS_LANGUAGES.map(([code, label]) => (
@@ -349,17 +420,6 @@ export default function AudioPanel() {
                     ))}
                   </select>
                 </div>
-                <label className="dl-row consent-row">
-                  <input
-                    type="checkbox"
-                    checked={consent}
-                    onChange={(e) => setConsent(e.target.checked)}
-                  />
-                  <span>
-                    Yüklediğim referans sesin sahibi olduğumu veya sesini klonlamak için
-                    sahibinden açık izin aldığımı beyan ederim.
-                  </span>
-                </label>
               </>
             )}
           </>
@@ -394,12 +454,15 @@ export default function AudioPanel() {
           const resultOp = String(a.meta.params?.op ?? "");
           const isTts = resultOp === "tts";
           const resultEngine = String(a.meta.params?.engine ?? "kokoro");
+          const resultCloned = Boolean(a.meta.result?.cloned);
           const transcript = String(a.meta.result?.text ?? "");
           return (
             <div className="audio-result-card" key={a.id}>
               {isTts ? (
                 <>
-                  {resultEngine === "xtts" && <span className="fmt">XTTS-v2 klon</span>}
+                  {resultEngine === "xtts" && (
+                    <span className="fmt">{resultCloned ? "XTTS-v2 klon" : "XTTS-v2"}</span>
+                  )}
                   <audio controls src={outUrl(a.path)} />
                   <p className="muted">"{String(a.meta.params?.text ?? "").slice(0, 120)}"</p>
                 </>

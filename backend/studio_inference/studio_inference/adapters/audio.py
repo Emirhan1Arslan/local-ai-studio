@@ -34,9 +34,11 @@ tts:
 - text: seslendirilecek metin (zorunlu)
 - engine: kokoro (vars.) | xtts
 - kokoro: voice (vars. "af_heart") · lang_code (vars. "a", Amerikan İngilizcesi)
-- xtts: speaker_wav (klonlanacak referans ses, zorunlu) · language (vars. "en";
-  tr dahil ~17 dil) · consent (zorunlu, true olmalı — sesin sahibinden izin
-  alındığının beyanı, plan.md etik onay şartı)
+- xtts: language (vars. "en"; tr dahil ~17 dil) · ikisinden biri zorunlu:
+  - speaker: 58 hazır sesten biri (model checkpoint'ine gömülü — ör. "Ana
+    Florence"); klonlama değildir, consent gerekmez
+  - speaker_wav: klonlanacak referans ses dosyası; verilirse consent=true
+    ZORUNLU (sesin sahibinden izin alındığının beyanı, plan.md etik onay şartı)
 - speed: 0.5-2.0 (vars. 1.0, yalnızca kokoro)
 - çıktı: WAV (24kHz kokoro / 24kHz xtts)
 """
@@ -291,11 +293,13 @@ class AudioAdapter:
 
     def _tts_xtts(self, params: dict, text: str, output_path: str) -> Iterator[dict]:
         speaker_wav = params.get("speaker_wav", "")
-        if not speaker_wav:
+        speaker = params.get("speaker", "")
+        if not speaker_wav and not speaker:
             raise RuntimeError(
-                "speaker_wav gerekli: xtts motoru klonlanacak bir referans ses dosyası ister"
+                "speaker_wav ya da speaker gerekli: xtts motoru ya klonlanacak bir "
+                "referans ses dosyası ya da 58 hazır sesten birinin adını ister"
             )
-        if not params.get("consent"):
+        if speaker_wav and not params.get("consent"):
             raise RuntimeError(
                 "consent=true gerekli: ses klonlama yalnızca, seslendirilecek sesin "
                 "sahibinden izin alındığını beyan ettiğinizde çalışır (bkz. plan.md "
@@ -306,13 +310,17 @@ class AudioAdapter:
         yield {"event": "progress", "value": 0.1, "message": "XTTS-v2 model yükleniyor…"}
         tts = self._get_xtts()
 
-        yield {"event": "progress", "value": 0.4, "message": "ses klonlanıyor…"}
-        tts.tts_to_file(
-            text=text,
-            speaker_wav=speaker_wav,
-            language=language,
-            file_path=output_path,
-        )
+        yield {
+            "event": "progress",
+            "value": 0.4,
+            "message": "ses klonlanıyor…" if speaker_wav else "sentezleniyor…",
+        }
+        tts_kwargs: dict[str, Any] = {"text": text, "language": language, "file_path": output_path}
+        if speaker_wav:
+            tts_kwargs["speaker_wav"] = speaker_wav
+        else:
+            tts_kwargs["speaker"] = speaker
+        tts.tts_to_file(**tts_kwargs)
 
         import soundfile as sf
 
@@ -325,6 +333,7 @@ class AudioAdapter:
                 "engine": "xtts",
                 "duration": duration,
                 "language": language,
+                "cloned": bool(speaker_wav),
             },
         }
 

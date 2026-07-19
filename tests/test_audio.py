@@ -76,7 +76,7 @@ def test_tts_unknown_engine_fails(client):
     assert "bilinmeyen engine" in d["error"]
 
 
-def test_xtts_requires_speaker_wav(client):
+def test_xtts_requires_speaker_wav_or_speaker(client):
     r = client.post(
         "/v1/jobs",
         json={
@@ -85,7 +85,27 @@ def test_xtts_requires_speaker_wav(client):
         },
     )
     d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
-    assert "speaker_wav" in d["error"]
+    assert "speaker_wav" in d["error"] and "speaker" in d["error"]
+
+
+def test_xtts_preset_speaker_does_not_require_consent(client):
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {
+                "op": "tts",
+                "engine": "xtts",
+                "text": "merhaba",
+                "speaker": "Ana Florence",
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    # consent kontrolünü geçip model yükleme aşamasına ulaştığını doğrular
+    # (bu ortamda xtts paketi kurulu değil → "worker ortamı eksik" ile düşer)
+    assert "consent" not in d["error"]
+    assert "worker ortamı eksik" in d["error"] or "TTS" in d["error"]
 
 
 def test_xtts_requires_consent(client):

@@ -209,9 +209,12 @@ her defasında sistem kopyasını "outside environment" diyerek reddetti, yalnı
 venv'e shadow kurdu); Kokoro ve faster-whisper regresyon testleri bu
 değişikliklerden sonra da temiz geçti.
 
-- `engine=xtts` params: `speaker_wav` (klonlanacak referans ses, zorunlu),
-  `language` (vars. "en" — tr dahil ~17 dil), `consent` (zorunlu `true` —
-  UI'da bir onay kutusuyla toplanır, plan.md Faz 7 adım 4).
+- `engine=xtts` params: `language` (vars. "en" — tr dahil ~17 dil) + ikisinden
+  biri zorunlu: `speaker` (checkpoint'e gömülü 58 hazır sesten biri, ör. "Ana
+  Florence" — klonlama değildir, `consent` gerekmez) ya da `speaker_wav`
+  (klonlanacak referans ses; verilirse `consent=true` ZORUNLU — UI'da bir
+  onay kutusuyla toplanır, plan.md Faz 7 adım 4). Hazır ses listesi
+  `tts.speakers` özelliğinden okunur, bu modele özgü sabit bir listedir.
 - **LİSANS:** XTTS-v2 model ağırlıkları **Coqui Public Model License
   (CPML)** ile geliyor — yalnızca ticari OLMAYAN kullanım. `COQUI_TOS_AGREED=1`
   adapter içinde otomatik ayarlanır (worker sürecinde etkileşimli prompt
