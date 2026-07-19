@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     worker_pythons: dict[str, str] = {}
     # Boştaki worker'ın (ve yüklü modelinin) bellekte kalma süresi (sn)
     worker_idle_timeout: float = 300.0
+    # İndirme motorunun toplam hız sınırı (MB/sn) — 0 = sınırsız. Tüm eşzamanlı
+    # indirmeler arasında PAYLAŞILIR (bkz. studio_models/downloader.py::_RateLimiter);
+    # canlı etkili, restart gerekmez (Ayarlar/İndirmeler panelinden değiştirilebilir).
+    download_speed_limit_mbps: float = 0.0
 
     @property
     def models_dir(self) -> Path:

@@ -17,6 +17,7 @@ def test_settings_shape(client):
         "telemetry_interval",
         "worker_idle_timeout",
         "worker_concurrency",
+        "download_speed_limit_mbps",
         "paths",
     ):
         assert key in body
@@ -84,6 +85,29 @@ def test_settings_validates_bounds(client):
     assert r.status_code == 422
     r2 = client.put("/v1/settings", json={"worker_concurrency": 0})
     assert r2.status_code == 422
+
+
+def test_download_speed_limit_default_unlimited(client):
+    assert client.get("/v1/settings").json()["download_speed_limit_mbps"] == 0
+
+
+def test_download_speed_limit_updates_live(client):
+    """Faz 8: kullanıcı İndirmeler/Ayarlar panelinden hız sınırını değiştirebilir —
+    canlı etkili (studio_models.downloader._RateLimiter her chunk'ta taze okur)."""
+    import studio_core.config as cfg
+
+    r = client.put("/v1/settings", json={"download_speed_limit_mbps": 5})
+    assert r.status_code == 200
+    assert r.json()["download_speed_limit_mbps"] == 5
+    assert cfg.get_settings().download_speed_limit_mbps == 5
+
+    client.put("/v1/settings", json={"download_speed_limit_mbps": 0})
+    assert cfg.get_settings().download_speed_limit_mbps == 0
+
+
+def test_download_speed_limit_rejects_negative(client):
+    r = client.put("/v1/settings", json={"download_speed_limit_mbps": -1})
+    assert r.status_code == 422
 
 
 def test_diagnostics_bundle_contains_expected_files(client, tmp_path):

@@ -14,13 +14,20 @@ from studio_core.config import get_settings
 from studio_core.db import session_scope
 from studio_core.models import Setting
 
-EDITABLE_KEYS = {"hf_token", "telemetry_interval", "worker_idle_timeout", "worker_concurrency"}
+EDITABLE_KEYS = {
+    "hf_token",
+    "telemetry_interval",
+    "worker_idle_timeout",
+    "worker_concurrency",
+    "download_speed_limit_mbps",
+}
 
 _CASTERS = {
     "hf_token": str,
     "telemetry_interval": float,
     "worker_idle_timeout": float,
     "worker_concurrency": int,
+    "download_speed_limit_mbps": float,
 }
 
 

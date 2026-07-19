@@ -289,6 +289,7 @@ export interface SnapshotRequest {
   repo_id: string;
   subdir: string;
   revision?: string;
+  only_patterns?: string[];
 }
 
 export interface HfModelInfo {
@@ -381,6 +382,7 @@ export interface SettingsInfo {
   telemetry_interval: number;
   worker_idle_timeout: number;
   worker_concurrency: number;
+  download_speed_limit_mbps: number;
   paths: SettingsPaths;
 }
 
@@ -389,6 +391,7 @@ export interface SettingsUpdate {
   telemetry_interval?: number;
   worker_idle_timeout?: number;
   worker_concurrency?: number;
+  download_speed_limit_mbps?: number;
 }
 
 export async function fetchSettings(): Promise<SettingsInfo> {

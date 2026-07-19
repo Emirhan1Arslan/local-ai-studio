@@ -245,6 +245,35 @@ def test_hf_list_files_repo_not_found(dl_client):
     assert r.status_code == 400
 
 
+def test_snapshot_download_only_patterns_filters_files(dl_client):
+    """Faz 8: Mochi gibi aynı repo'da hem fp32 hem bf16 varyantını tutan modellerde
+    yalnızca istenen varyantı seçmek için only_patterns kullanılabilir."""
+    r = dl_client.post(
+        "/v1/downloads/snapshot",
+        json={
+            "repo_id": "org/some-repo",
+            "subdir": "captioning",
+            "only_patterns": ["config.json"],
+        },
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    assert Path(rows[0]["dest_path"]).name == "config.json"
+
+
+def test_snapshot_download_only_patterns_no_match_rejected(dl_client):
+    r = dl_client.post(
+        "/v1/downloads/snapshot",
+        json={
+            "repo_id": "org/some-repo",
+            "subdir": "captioning",
+            "only_patterns": ["*.nonexistent"],
+        },
+    )
+    assert r.status_code == 400
+
+
 def test_snapshot_download_queues_all_files(dl_client):
     """Faz 5: çok dosyalı HF repo'su tek istekte kuyruğa alınır, hepsi aynı repo
     klasörüne iner (BiRefNet/Florence-2/SAM gibi tek-dosya olmayan modeller)."""
@@ -324,3 +353,41 @@ def test_traversal_filename_sanitized(dl_client):
     models_dir = get_settings().models_dir.resolve()
     assert models_dir in dest.resolve().parents
     assert dest.name == "kacak.bin"
+
+
+def test_rate_limiter_noop_when_unlimited(client, monkeypatch):
+    """Faz 8: hız sınırı 0 (sınırsız) iken throttle() hiç uyumamalı."""
+    from studio_core.config import get_settings as _gs
+
+    _gs().download_speed_limit_mbps = 0
+    limiter = downloader._RateLimiter()
+    slept = []
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: slept.append(s) or real_sleep(0))
+
+    asyncio.run(limiter.throttle(10 * 1024 * 1024))
+    assert slept == []
+
+
+def test_rate_limiter_throttles_to_configured_rate(client, monkeypatch):
+    """1 MB/sn sınırlanmış limitte art arda 3 adet 1 MB'lık chunk — ilki hiç
+    beklemez (kova dolu başlar), sonraki her chunk ~1 sn'lik bekleme üretir
+    (sanal zaman damgalı ortak kova — bkz. downloader.py)."""
+    from studio_core.config import get_settings as _gs
+
+    _gs().download_speed_limit_mbps = 1  # 1 MB/sn
+    limiter = downloader._RateLimiter()
+    slept = []
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: slept.append(s) or real_sleep(0))
+
+    async def _run():
+        for _ in range(3):
+            await limiter.throttle(1024 * 1024)
+
+    asyncio.run(_run())
+    _gs().download_speed_limit_mbps = 0  # diğer testleri etkilememesi için sıfırla
+    # mock'lanmış sleep gerçek zaman geçirmediği için 3 chunk da art arda "anında"
+    # gelmiş gibi ölçülür: 1. chunk beklemez, 2. ~1sn, 3. ~2sn (kümülatif zamanlama) bekler.
+    assert len(slept) == 2
+    assert sum(slept) == pytest.approx(3.0, abs=0.1)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -44,6 +45,10 @@ class SnapshotRequest(BaseModel):
     repo_id: str
     subdir: str = Field(description=f"models/ altındaki hedef: {', '.join(MODEL_SUBDIRS)}")
     revision: str = "main"
+    # Boşsa repo'daki tüm dosyalar iner. Verilirse yalnızca eşleşen dosyalar iner —
+    # ör. Mochi gibi hem fp32 hem bf16 varyantını aynı repo'da tutan modellerde
+    # yalnızca ihtiyaç duyulan varyantı seçmek için (fnmatch desenleri, ör. "*.bf16*").
+    only_patterns: list[str] = Field(default_factory=list)
 
 
 class DownloadOut(BaseModel):
@@ -213,6 +218,10 @@ async def create_snapshot_download(req: SnapshotRequest) -> list[DownloadOut]:
     filenames = [
         f["filename"] for f in all_files if not f["filename"].endswith((".gitattributes", ".md"))
     ]
+    if req.only_patterns:
+        filenames = [
+            f for f in filenames if any(fnmatch(f, pat) for pat in req.only_patterns)
+        ]
     if not filenames:
         _bad_request("repo'da indirilecek dosya bulunamadı")
 

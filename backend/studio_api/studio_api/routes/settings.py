@@ -3,7 +3,7 @@
 Yol alanları salt okunurdur: değiştirmek veri taşımayı gerektirir, bu Faz 15
 ilk-çalıştırma sihirbazının kapsamındadır. Burada yalnız restart gerektirmeyen,
 zaten her kullanımda taze okunan alanlar (telemetri aralığı, worker idle timeout,
-worker eşzamanlılığı, HF token) düzenlenebilir.
+worker eşzamanlılığı, HF token, indirme hız sınırı) düzenlenebilir.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ class SettingsOut(BaseModel):
     telemetry_interval: float
     worker_idle_timeout: float
     worker_concurrency: int
+    download_speed_limit_mbps: float
     paths: PathsOut
 
 
@@ -50,6 +51,8 @@ class SettingsUpdate(BaseModel):
     telemetry_interval: float | None = Field(default=None, ge=0.5, le=30)
     worker_idle_timeout: float | None = Field(default=None, ge=10, le=3600)
     worker_concurrency: int | None = Field(default=None, ge=1, le=4)
+    # 0 = sınırsız
+    download_speed_limit_mbps: float | None = Field(default=None, ge=0, le=1000)
 
 
 class DiagnosticsOut(BaseModel):
@@ -63,6 +66,7 @@ def _snapshot() -> SettingsOut:
         telemetry_interval=s.telemetry_interval,
         worker_idle_timeout=s.worker_idle_timeout,
         worker_concurrency=s.worker_concurrency,
+        download_speed_limit_mbps=s.download_speed_limit_mbps,
         paths=PathsOut(
             data_dir=str(s.data_dir),
             models_dir=str(s.models_dir),
@@ -99,6 +103,9 @@ async def update_settings(body: SettingsUpdate) -> SettingsOut:
             s.worker_concurrency = data["worker_concurrency"]
             scheduler._concurrency = data["worker_concurrency"]
             save_override("worker_concurrency", s.worker_concurrency)
+        if "download_speed_limit_mbps" in data:
+            s.download_speed_limit_mbps = data["download_speed_limit_mbps"]
+            save_override("download_speed_limit_mbps", s.download_speed_limit_mbps)
         return _snapshot()
 
     return await asyncio.to_thread(_apply)

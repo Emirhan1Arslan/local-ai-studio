@@ -7,6 +7,9 @@ Tasarım:
   baştan başlanır. Hash, .part'ın mevcut kısmı yeniden okunarak sürdürülür.
 - Pause = task iptali + .part korunur; Cancel = task iptali + .part silinir.
 - Süreç yeniden başlarsa 'downloading' kalmış kayıtlar 'paused'a çekilir (recover()).
+- Hız sınırı (Faz 8'de eklendi, kullanıcı isteğiyle): tüm eşzamanlı indirmeler
+  arasında PAYLAŞILAN tek bir _RateLimiter — Ayarlar/İndirmeler panelinden
+  (settings.download_speed_limit_mbps) canlı değiştirilebilir, restart gerekmez.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from studio_core.config import get_settings
 from studio_core.db import session_scope
 from studio_core.logging import get_logger
 from studio_core.models import Download, DownloadStatus
@@ -28,6 +32,31 @@ log = get_logger("studio_models.downloader")
 CHUNK_SIZE = 1024 * 1024
 PROGRESS_INTERVAL = 0.5  # sn
 DISK_MARGIN_BYTES = 500 * 1024 * 1024  # hedef diskte bırakılacak pay
+
+
+class _RateLimiter:
+    """Sanal zaman damgalı ortak kova: her indirme chunk yazdıktan sonra bunu
+    çağırır, toplam hız (tüm eşzamanlı indirmeler dahil) ayarlanan sınırı
+    aşarsa uyur. Sınır her çağrıda settings'ten TAZE okunur — kullanıcı
+    Ayarlar/İndirmeler panelinden değiştirdiğinde bir sonraki chunk'ta hemen
+    etkili olur."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._next_time = 0.0
+
+    async def throttle(self, n_bytes: int) -> None:
+        limit_mbps = get_settings().download_speed_limit_mbps
+        if limit_mbps <= 0 or n_bytes <= 0:
+            return
+        bytes_per_sec = limit_mbps * 1024 * 1024
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            start = max(now, self._next_time)
+            self._next_time = start + n_bytes / bytes_per_sec
+            delay = start - now
+        if delay > 0:
+            await asyncio.sleep(delay)
 
 # Olay yayını: app katmanı bus.emit'i bağlar; testlerde no-op olabilir.
 EmitFn = Callable[..., None]
@@ -63,6 +92,7 @@ class DownloadManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._pause_requested: set[str] = set()
         self._transport = transport  # testlerde ASGITransport enjekte edilir
+        self._rate_limiter = _RateLimiter()
 
     def set_emit(self, emit: EmitFn) -> None:
         self._emit = emit
@@ -72,6 +102,7 @@ class DownloadManager:
         self._sem = asyncio.Semaphore(self._concurrency)
         self._tasks = {}
         self._pause_requested = set()
+        self._rate_limiter = _RateLimiter()  # Lock eski event loop'a bağlıydı
 
     # -- kuyruk yönetimi ---------------------------------------------------
 
@@ -220,6 +251,7 @@ class DownloadManager:
                         f.write(chunk)
                         hasher.update(chunk)
                         downloaded += len(chunk)
+                        await self._rate_limiter.throttle(len(chunk))
                         now = asyncio.get_running_loop().time()
                         if now - last_emit >= PROGRESS_INTERVAL:
                             last_emit = now

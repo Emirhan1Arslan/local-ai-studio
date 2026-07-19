@@ -4,6 +4,8 @@ import {
   createSnapshotDownload,
   downloadAction,
   fetchDownloads,
+  fetchSettings,
+  updateSettings,
   type DownloadInfo,
 } from "../api";
 import { useStudio } from "../state";
@@ -50,11 +52,34 @@ export default function DownloadsPanel() {
   const [formStatus, setFormStatus] = useState("");
   const lastEvent = useRef(0);
 
+  // İndirme hız sınırı (Faz 8, kullanıcı isteğiyle): tüm eşzamanlı indirmeler
+  // arasında paylaşılan toplam sınır — canlı etkili, restart gerekmez. Yazarken
+  // her tuşta istek atmamak için 500ms debounce ile kaydediliyor.
+  const [speedLimit, setSpeedLimit] = useState<number>(0);
+  const [speedSaved, setSpeedSaved] = useState(true);
+  const speedDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const refresh = () => fetchDownloads().then(setRows).catch(() => setRows([]));
 
   useEffect(() => {
-    if (connected) refresh();
+    if (!connected) return;
+    refresh();
+    fetchSettings().then((s) => setSpeedLimit(s.download_speed_limit_mbps)).catch(() => undefined);
   }, [connected]);
+
+  const onSpeedLimitChange = (value: number) => {
+    setSpeedLimit(value);
+    setSpeedSaved(false);
+    if (speedDebounce.current) clearTimeout(speedDebounce.current);
+    speedDebounce.current = setTimeout(async () => {
+      try {
+        await updateSettings({ download_speed_limit_mbps: value });
+        setSpeedSaved(true);
+      } catch {
+        /* bir sonraki değişiklikte yeniden denenir */
+      }
+    }, 500);
+  };
 
   // download.* olayları: progress → satırı yerinde güncelle; diğerleri → yeniden yükle
   useEffect(() => {
@@ -106,6 +131,22 @@ export default function DownloadsPanel() {
 
   return (
     <div className="panel-body">
+      <div className="dl-row" style={{ marginBottom: 10 }}>
+        <label className="gen-num">
+          hız sınırı (MB/sn, 0 = sınırsız){" "}
+          <input
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            value={speedLimit}
+            onChange={(e) => onSpeedLimitChange(Number(e.target.value))}
+          />
+        </label>
+        <span className="muted">
+          {speedSaved ? "tüm eşzamanlı indirmeler için toplam sınır" : "kaydediliyor…"}
+        </span>
+      </div>
       <form className="dl-form" onSubmit={submit}>
         <div className="dl-row">
           <label>
