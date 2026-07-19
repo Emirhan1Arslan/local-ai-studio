@@ -26,8 +26,12 @@ params:
 - prompt / negative_prompt (hunyuan hariç tüm ailelerde) · width/height ·
   num_frames · fps (yalnızca encode'a etki eder; ltx'te ayrıca generation'a da
   frame_rate olarak geçer) · steps · cfg · seed · output_path (.mp4)
-- vram_mode: max (vars.) | balanced (model offload) | low (sequential+tiling) —
-  wan/hunyuan/mochi 32 GB'lık bir GPU'da genellikle balanced/low ister
+- vram_mode: max (vars.) | balanced (model offload) | low (bileşen bazlı
+  device_map='auto' + max_memory ile GPU önce dolar, taşan kısım CPU RAM'e
+  gider — tiling de eklenir) — wan/hunyuan/mochi 32 GB'lık bir GPU'da
+  genellikle balanced/low ister; model boyutu sistem RAM'ini de aşıyorsa
+  (ör. HunyuanVideo/Mochi bu makinede) yalnızca 'low' çalışır çünkü model asla
+  CPU'da tam materialize olmaz (bkz. docs/worker-envs.md)
 """
 
 from __future__ import annotations
@@ -134,7 +138,10 @@ def _align(value: Any, multiple: int = 32, lo: int = 256, hi: int = 1280) -> int
 
 # Aile başına ölçülen/tahmini adım hızı (adım/sn, varsayılan çözünürlükte) — Faz 8
 # canlı ölçümlerinden (RTX 5090); tahmini süre göstergesi için kullanılır.
-_STEPS_PER_SEC = {"ltx": 13.0, "wan": 2.0, "cogvideox": 4.0, "hunyuan": 0.5, "mochi": 1.0}
+# ltx/cogvideox/wan gerçek canlı ölçüm (bkz. docs/worker-envs.md, küçültülmüş
+# çözünürlükte ölçüldü); hunyuan/mochi bu makinede RAM yetersizliğinden canlı
+# ölçülemedi, kaba tahmin olarak kaldı.
+_STEPS_PER_SEC = {"ltx": 13.0, "wan": 5.0, "cogvideox": 4.5, "hunyuan": 0.5, "mochi": 1.0}
 
 
 def estimate_seconds(family: str, steps: int) -> float:
@@ -177,6 +184,77 @@ def recommend_settings(
     return new_width, new_height, new_frames, new_vram_mode
 
 
+def _load_pipeline_split(cls: Any, repo: str, dtype: Any, gpu_budget_gb: float, cpu_budget_gb: float) -> Any:
+    """Bileşen bazlı yükleme (Faz 8, HunyuanVideo/Mochi RAM taşması sonrası eklendi
+    — bkz. docs/worker-envs.md): pipeline'ın kendi from_pretrained'ı tüm modeli
+    ÖNCE CPU RAM'e tam olarak yükleyip SONRA offload uyguluyordu
+    (enable_sequential_cpu_offload) — model boyutu (HunyuanVideo ~39GB, Mochi
+    ~37GB) sistem RAM'ini (bu makinede 15.7GB) aşınca segfault ile çöküyordu.
+    Bunun yerine her ağır alt-modeli (transformer/text_encoder/vae) accelerate'in
+    device_map='sequential' + max_memory mekanizmasıyla DOĞRUDAN hedef cihaza
+    dağıtır: önce GPU'ya kadar dolan (gpu_budget_gb), taşan kısım CPU RAM'e
+    (cpu_budget_gb) — model asla CPU'da tam olarak materialize olmaz.
+    ('auto'/'balanced' yerine 'sequential' seçildi çünkü ikisi de transformers/
+    diffusers'ın get_balanced_memory() adımını tetikliyor — bu fonksiyon
+    max_memory'deki "disk" anahtarını torch.device(...) ile ayrıştırmaya
+    çalışıp RuntimeError atıyor; 'sequential' bu adımı tamamen atlıyor, ayrıca
+    GPU'yu önce doldurup taşanı sırayla CPU'ya vermesi zaten istediğimiz davranış.)
+    GPU+CPU payı toplam model boyutunu karşılamazsa kalanı diske (offload_folder)
+    taşır — yavaş ama çöküp süreci öldürmez."""
+    import json
+    import os as _os
+    import tempfile
+
+    import diffusers
+    import torch
+
+    try:
+        import transformers
+    except ImportError:
+        transformers = None
+
+    with open(_os.path.join(repo, "model_index.json"), encoding="utf-8") as f:
+        index = json.load(f)
+
+    max_memory = {0: f"{gpu_budget_gb:.1f}GiB", "cpu": f"{cpu_budget_gb:.1f}GiB", "disk": "200GiB"}
+    offload_folder = _os.path.join(tempfile.gettempdir(), "studio_video_offload")
+    _os.makedirs(offload_folder, exist_ok=True)
+    components: dict[str, Any] = {}
+    for name, entry in index.items():
+        if name.startswith("_") or not isinstance(entry, list) or len(entry) != 2:
+            continue
+        library_name, class_name = entry
+        if not class_name:
+            components[name] = None
+            continue
+        module = diffusers if library_name == "diffusers" else transformers
+        cls_obj = getattr(module, class_name, None) if module is not None else None
+        if cls_obj is None:
+            continue
+        load_kwargs: dict[str, Any] = {"subfolder": name}
+        if isinstance(cls_obj, type) and issubclass(cls_obj, torch.nn.Module):
+            load_kwargs.update(
+                torch_dtype=dtype,
+                device_map="sequential",
+                max_memory=dict(max_memory),
+                low_cpu_mem_usage=True,
+                offload_folder=_os.path.join(offload_folder, name),
+                offload_state_dict=True,
+            )
+        components[name] = cls_obj.from_pretrained(repo, **load_kwargs)
+
+    return cls(**components)
+
+
+def _free_ram_gb() -> float:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available / (1024**3)
+    except Exception:
+        return 4.0  # psutil yoksa ihtiyatlı bir varsayılan
+
+
 class VideoAdapter:
     def __init__(self) -> None:
         self._pipe = None
@@ -203,19 +281,23 @@ class VideoAdapter:
         use_cuda = torch.cuda.is_available()
         dtype = torch.bfloat16 if use_cuda else torch.float32
         repo = _resolve_pipeline_root(model_path) if model_path else spec["repo"]
-        pipe = cls.from_pretrained(repo, torch_dtype=dtype)
 
-        if use_cuda:
-            if vram_mode == "low":
-                try:
-                    pipe.vae.enable_tiling()
-                except Exception:
-                    pass
-                pipe.enable_sequential_cpu_offload()
-            elif vram_mode == "balanced":
-                pipe.enable_model_cpu_offload()
-            else:
-                pipe.to("cuda")
+        if use_cuda and vram_mode == "low":
+            gpu_total_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gpu_budget_gb = max(4.0, gpu_total_gb * 0.9)
+            cpu_budget_gb = max(2.0, _free_ram_gb() - 3.0)  # OS/diğer süreçler için pay
+            pipe = _load_pipeline_split(cls, repo, dtype, gpu_budget_gb, cpu_budget_gb)
+            try:
+                pipe.vae.enable_tiling()
+            except Exception:
+                pass
+        else:
+            pipe = cls.from_pretrained(repo, torch_dtype=dtype)
+            if use_cuda:
+                if vram_mode == "balanced":
+                    pipe.enable_model_cpu_offload()
+                else:
+                    pipe.to("cuda")
 
         self._pipe = pipe
         self._family = family

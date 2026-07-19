@@ -377,23 +377,40 @@ görünür/yönetilebilir hale geldi.
 
 **DoD:** 5 sn 720p klip LTX ile üretilir, iptal/duraklat çalışır ve VRAM geri döner; ffmpeg zinciri (kes+birleştir+ses) UI'dan kurulup çalışır.
 
-**Durum (2026-07-19):** Adım 1 (LTX-Video tamamlandı; Wan 2.x/CogVideoX/
-Hunyuan Video/Mochi kodu yazıldı — `adapters/video.py`'nin `_FAMILIES`
-tablosu 5 aileyi de tanımlıyor, ancak model indirmeleri sürüyor, canlı GPU
-doğrulaması henüz yalnızca LTX için tamamlandı; Pyramid Flow/SkyReels
-diffusers'ın yerleşik pipeline'ları arasında yok, uygulanmadı), 2 (öncelik
-sınıfı + ara kare önizlemesi + tahmini süre — LTX ile canlı doğrulandı;
-checkpoint/sürdürme hâlâ ertelendi), 3 (VRAM'e göre otomatik çözünürlük
-önerisi — canlı doğrulandı, bu makinede LTX için devreye girmiyor; fp8
-ertelendi), 4 (kes/birleştir/hız/ses ekleme/format dönüştürme + video
-upscale, ESRGAN yeniden kullanılarak — hepsi canlı doğrulandı; RIFE
-ertelendi), 5 (Video paneli + gerçek video scrubber/kare-kare önizleme —
-tamamlandı) RTX 5090'da canlı doğrulandı. İptal/duraklat zaten scheduler'ın
-genel süreç-kill mekanizmasından (adapter'a özgü kod gerekmeden) ücretsiz
-çalışıyor. **Ertelenen kalanlar:**
-- Adım 1 kalan: Wan 2.x/CogVideoX/Hunyuan/Mochi'nin GPU'da canlı doğrulanması
-  (indirmeler devam ediyor — büyük repolar, kullanıcı isteğiyle 5 MB/sn'ye
-  sınırlandı); Pyramid Flow, SkyReels (diffusers'ta yerleşik pipeline yok)
+**Durum (2026-07-20):** Adım 1 (LTX-Video, CogVideoX-2b ve Wan2.1-T2V-1.3B
+RTX 5090'da canlı GPU doğrulandı — sırasıyla 56.2sn/66.8sn 480p/17 kare/10
+adım üretim, ffprobe ile h264 çıktı doğrulaması; HunyuanVideo/Mochi kodu
+yazılı ve modelleri tam indirilmiş durumda ama bu makinede canlı
+DOĞRULANAMADI, bkz. aşağıdaki not; Pyramid Flow/SkyReels diffusers'ın
+yerleşik pipeline'ları arasında yok, uygulanmadı), 2 (öncelik sınıfı + ara
+kare önizlemesi + tahmini süre — LTX ile canlı doğrulandı; checkpoint/
+sürdürme hâlâ ertelendi), 3 (VRAM'e göre otomatik çözünürlük önerisi —
+canlı doğrulandı, bu makinede LTX için devreye girmiyor; fp8 ertelendi;
+ayrıca HunyuanVideo/Mochi'nin RAM sorunu için GPU-öncelikli bileşen-bazlı
+yükleme —`_load_pipeline_split()`— eklendi, bkz. aşağıdaki not), 4 (kes/
+birleştir/hız/ses ekleme/format dönüştürme + video upscale, ESRGAN yeniden
+kullanılarak — hepsi canlı doğrulandı; RIFE ertelendi), 5 (Video paneli +
+gerçek video scrubber/kare-kare önizleme — tamamlandı) RTX 5090'da canlı
+doğrulandı. İptal/duraklat zaten scheduler'ın genel süreç-kill
+mekanizmasından (adapter'a özgü kod gerekmeden) ücretsiz çalışıyor.
+
+**HunyuanVideo/Mochi — RAM sınırı (2026-07-20, açık/bilinen sınırlama):**
+Her iki model de tam indirildi (39.0GB / 37.3GB) ve Model Manager'da tek
+kayıt olarak doğru görünüyor, ama bu makinenin sistem RAM'i (15.7GB toplam)
+canlı üretim için yetersiz — GPU'nun 32GB VRAM'i sorun değil. GPU-öncelikli
+bileşen-bazlı yükleme (`device_map="sequential"` + disk-offload denemesi)
+eklendi, önceki anlık rastgele-nokta segfault'unu text_encoder için
+gerçekten çözdü, ama transformer yüklenirken hâlâ ~4GB açıkla aynı RAM
+taşması segfault'una düşüyor (disk katmanı max_memory'de tanımlı olsa da
+ilk shard-okuma adımında fiilen devreye girmiyor gibi görünüyor — bkz.
+docs/worker-envs.md ayrıntılar). Kullanıcı kararı: RAM yükseltmesi veya
+text_encoder nicemleme yatırımı yapılana kadar bu iki aile ertelendi, Wan/
+CogVideoX/LTX ile devam edildi.
+
+**Ertelenen kalanlar:**
+- Adım 1 kalan: HunyuanVideo/Mochi'nin GPU'da canlı doğrulanması (RAM
+  sınırı, yukarıya bakın); Pyramid Flow, SkyReels (diffusers'ta yerleşik
+  pipeline yok)
 - Adım 2 kalan: checkpoint/sürdürme (mid-diffusion resume) — scheduler'ın
   "cancel = VRAM güvenliği için süreci öldür" tasarımıyla temelden çelişiyor,
   gerçek çözüm latent serileştirme gerektirir

@@ -157,6 +157,12 @@ class DownloadManager:
         rec = _get(download_id)
         if rec is None or rec.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED):
             return False
+        existing = self._tasks.get(download_id)
+        if existing is not None and not existing.done():
+            # Zaten çalışan bir task var — ikinci kez başlatırsak aynı .part dosyasına
+            # iki coroutine birden yazar ve dosya bozulur (arka arkaya iki resume çağrısı,
+            # ör. toplu 'devam ettir' + ayrı bir yeniden deneme aynı ID'yi vurursa).
+            return False
         self._start_task(download_id, headers or {})
         return True
 
@@ -206,6 +212,33 @@ class DownloadManager:
         part = Path(rec.dest_path + ".part")
         dest.parent.mkdir(parents=True, exist_ok=True)
 
+        if dest.exists() and not part.exists():
+            # Dosya diskte zaten var: önceki denemede part->dest rename başarılı olmuş
+            # ama kayıt DONE'a çevrilmeden kesilmiş olmalı (crash/cancel tam o arada).
+            # .part yoksa resume için ağa gidilemez zaten. Ama körü körüne güvenme:
+            # bilinen total_bytes varsa boyutu doğrula — uyuşmuyorsa dosya bozuk demektir
+            # (ör. eşzamanlı iki resume aynı .part'a yazmış olabilir), sil ve baştan indir.
+            size = dest.stat().st_size
+            if not rec.total_bytes or size == rec.total_bytes:
+                _update(
+                    download_id,
+                    status=DownloadStatus.DONE,
+                    downloaded_bytes=size,
+                    total_bytes=size,
+                    finished_at=datetime.now(UTC),
+                )
+                self._emit("download.done", id=download_id, dest=str(dest), sha256="")
+                log.info("download_already_on_disk", id=download_id, dest=str(dest))
+                return
+            log.warning(
+                "download_dest_size_mismatch",
+                id=download_id,
+                dest=str(dest),
+                actual=size,
+                expected=rec.total_bytes,
+            )
+            dest.unlink()
+
         resume_from = part.stat().st_size if part.exists() else 0
         req_headers = dict(headers)
         if resume_from:
@@ -224,44 +257,75 @@ class DownloadManager:
         if self._transport is not None:
             client_kwargs["transport"] = self._transport
 
+        total = resume_from
+        downloaded = resume_from
+        already_complete = False
+
         async with httpx.AsyncClient(**client_kwargs) as client:
             async with client.stream("GET", rec.url, headers=req_headers) as resp:
                 if resume_from and resp.status_code == 200:
                     # sunucu Range desteklemiyor → baştan
                     resume_from = 0
+                    downloaded = 0
                     hasher = hashlib.sha256()
+                elif resume_from and resp.status_code == 416:
+                    # .part zaten resume_from kadar bayt içeriyor ve sunucu "eklenecek
+                    # bayt yok" diyor: son chunk yazılmış ama rename'e sıra gelmeden
+                    # (pause/crash/çakışan resume) kesilmiş olmalı. Content-Range ile
+                    # gerçek boyutu doğrula, eşleşiyorsa dosya zaten tamamlanmış say —
+                    # eşleşmiyorsa .part bozuk demektir, sıfırdan indir.
+                    content_range = resp.headers.get("content-range", "")
+                    true_size: int | None = None
+                    if content_range.startswith("bytes */"):
+                        try:
+                            true_size = int(content_range.split("/")[-1])
+                        except ValueError:
+                            true_size = None
+                    if true_size == resume_from:
+                        already_complete = True
+                        total = resume_from
+                        log.info("download_already_complete_on_resume", id=download_id)
+                    else:
+                        part.unlink(missing_ok=True)
+                        raise DownloadError(
+                            f"416 Range Not Satisfiable ve .part boyutu ({resume_from}) "
+                            f"sunucudaki gerçek boyutla ({true_size}) uyuşmuyor — .part silindi, "
+                            "yeniden indirilmesi gerekiyor"
+                        )
                 elif resume_from and resp.status_code != 206:
                     resp.raise_for_status()
-                resp.raise_for_status()
 
-                total = resume_from + int(resp.headers.get("content-length", 0) or 0)
-                free = shutil.disk_usage(dest.parent).free
-                if total and free < (total - resume_from) + DISK_MARGIN_BYTES:
-                    raise DownloadError(
-                        f"disk alanı yetersiz: {free // 2**20} MB boş, "
-                        f"{(total - resume_from) // 2**20} MB gerekli"
-                    )
+                if not already_complete:
+                    resp.raise_for_status()
 
-                downloaded = resume_from
-                _update(download_id, total_bytes=total, downloaded_bytes=downloaded)
-                last_emit = 0.0
-                mode = "ab" if resume_from else "wb"
-                with part.open(mode) as f:
-                    async for chunk in resp.aiter_bytes(CHUNK_SIZE):
-                        f.write(chunk)
-                        hasher.update(chunk)
-                        downloaded += len(chunk)
-                        await self._rate_limiter.throttle(len(chunk))
-                        now = asyncio.get_running_loop().time()
-                        if now - last_emit >= PROGRESS_INTERVAL:
-                            last_emit = now
-                            _update(download_id, downloaded_bytes=downloaded, total_bytes=total)
-                            self._emit(
-                                "download.progress",
-                                id=download_id,
-                                downloaded=downloaded,
-                                total=total,
-                            )
+                    total = resume_from + int(resp.headers.get("content-length", 0) or 0)
+                    free = shutil.disk_usage(dest.parent).free
+                    if total and free < (total - resume_from) + DISK_MARGIN_BYTES:
+                        raise DownloadError(
+                            f"disk alanı yetersiz: {free // 2**20} MB boş, "
+                            f"{(total - resume_from) // 2**20} MB gerekli"
+                        )
+
+                    downloaded = resume_from
+                    _update(download_id, total_bytes=total, downloaded_bytes=downloaded)
+                    last_emit = 0.0
+                    mode = "ab" if resume_from else "wb"
+                    with part.open(mode) as f:
+                        async for chunk in resp.aiter_bytes(CHUNK_SIZE):
+                            f.write(chunk)
+                            hasher.update(chunk)
+                            downloaded += len(chunk)
+                            await self._rate_limiter.throttle(len(chunk))
+                            now = asyncio.get_running_loop().time()
+                            if now - last_emit >= PROGRESS_INTERVAL:
+                                last_emit = now
+                                _update(download_id, downloaded_bytes=downloaded, total_bytes=total)
+                                self._emit(
+                                    "download.progress",
+                                    id=download_id,
+                                    downloaded=downloaded,
+                                    total=total,
+                                )
 
         actual = hasher.hexdigest()
         if rec.sha256_expected and actual != rec.sha256_expected:

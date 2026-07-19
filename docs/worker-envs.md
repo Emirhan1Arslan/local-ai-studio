@@ -414,15 +414,141 @@ blob URL'i (`URL.createObjectURL`, sunucu yüklemesi bitmeden anında
 oynatılabilir) bir `<video>` öğesinde gösterilip iki `range` slider'ı
 `currentTime`'ı canlı güncelleyerek kare-kare önizleme sağlıyor.
 
-**İndirme hızı sınırlaması (kullanıcı isteğiyle):** HF Hub'ın yeni Xet
-depolama istemcisi (`hf_xet` paketi) Python'ın `requests` oturumunu tamamen
-atlayıp kendi Rust HTTP istemcisiyle indiriyor — `configure_http_backend` ile
-kurulan bir hız sınırlayıcı session'ı görmüyor. Çözüm: `HF_HUB_DISABLE_XET=1`
-ortam değişkeniyle Xet devre dışı bırakılıp klasik `requests` tabanlı
-indirmeye düşülüyor; bir `HTTPAdapter` sarmalayıcısı (`response.raw.read`/
-`.stream`'i `time.sleep` ile geciktiren) `configure_http_backend`'e
-kaydediliyor. Canlı ölçüm: sınırsız ~11 MB/sn'den istenen 5 MB/sn'ye (ölçülen
-~3 MB/sn, güvenli tarafta) düştüğü doğrulandı. 4 model indirmesi PARALEL değil
-SIRALI çalıştırılıyor (aksi halde toplam hız istenen sınırı aşardı); hepsi
-`.incomplete` dosyalarından kaldığı yerden devam edebiliyor (indirme
-durdurulup yeniden başlatıldığında doğrulandı).
+**İndirme hızı sınırlaması (kullanıcı isteğiyle, gerçek Downloads Manager'a
+entegre edildi):** HF Hub'ın yeni Xet depolama istemcisi (`hf_xet` paketi)
+Python'ın `requests` oturumunu tamamen atlayıp kendi Rust HTTP istemcisiyle
+indiriyor — `configure_http_backend` ile kurulan bir hız sınırlayıcı
+session'ı görmüyor. Çözüm: `HF_HUB_DISABLE_XET=1` ortam değişkeniyle Xet
+devre dışı bırakılıp klasik `requests` tabanlı indirmeye düşülüyor.
+
+İlk turda ad-hoc bir `HTTPAdapter` sarmalayıcı script'i (scratchpad) ile
+denendi; kullanıcı bunun yerine **kalıcı, uygulama-içi** bir çözüm istedi
+("hız limitini ben ayarlayabileyim, indirmeleri kendi Downloads sayfamdan
+görüp duraklatıp devam ettirebilmeliyim"). Sonuç:
+
+- `download_speed_limit_mbps` — yeni Settings alanı (`config.py`,
+  `settings_store.py` `EDITABLE_KEYS`, `routes/settings.py`), 0 = sınırsız.
+- `_RateLimiter` (`studio_models/downloader.py`) — sanal-zaman damgalı token
+  bucket, TÜM eşzamanlı indirmeler için TEK toplam (aggregate) limit
+  uyguluyor (indirme başına değil). Her chunk'ta `get_settings()`'i taze
+  okuyor — limit değişikliği restart gerektirmeden anında etkili oluyor.
+  `DownloadManager.reset()` limiter'ı yeniden kuruyor çünkü `asyncio.Lock`
+  event-loop'a bağlı.
+- `DownloadsPanel.tsx` — hız limiti girişi (500ms debounce), gerçek
+  indirmeler artık BURADAN görülüp duraklatılıp/devam ettirilip iptal
+  edilebiliyor; ayrıca dosyalar `models_dir` altındaki repo-slug'a göre
+  gruplanıp (`groupKeyFor`) tek bir model başlığı altında toplanıyor, her
+  dosya genişletildiğinde ayrı ayrı hâlâ izlenebiliyor/duraklatılabiliyor
+  (bu gruplama salt UI katmanı — DB kayıtları ayrı ayrı kalıyor; Model
+  Manager'daki fiziksel birleştirme `group_key()`'den farklı bir kavram).
+- `SnapshotRequest.only_patterns` (fnmatch, `routes/downloads.py`) — çok
+  dosyalı repo indirmelerinde alt küme seçimi için genel amaçlı filtre;
+  Mochi'nin aynı repo içindeki hem fp32 hem bf16 varyantından yalnızca
+  bf16'yı (~65GB, 19 dosya) çekmek için kullanıldı (repo toplamı ~133GB).
+- Canlı ölçüm: gerçek API üzerinden 5 MB/sn hedefine karşı ~4.8 MB/sn
+  toplam indirme hızı ölçüldü.
+- **CogVideoX-2b istisnası:** bu model ad-hoc yöntemle zaten ~%87 inmiş
+  durumdaydı; ilerlemeyi (~12GB) çöpe atmamak için o tek model HF cache
+  üzerinden eski yöntemle tamamlanıp `models_dir/video/`'a yerleştirildi,
+  Wan/Hunyuan/Mochi ise baştan gerçek Downloads Manager kuyruğundan indirildi
+  — bu karar kullanıcıya açıkça anlatıldı.
+
+### Downloads Manager'da canlı testte bulunan 3 hata (`studio_models/downloader.py`)
+
+Wan/Hunyuan/Mochi'nin çok-dosyalı indirmeleri sırasında dosyalar tekrar tekrar
+"paused"a düşüyor, hatta bazen **zaten `done` olan dosyalar sıfırdan tekrar
+iniyordu** gibi görünüyordu. Kök neden üç ayrı, gerçek hataydı:
+
+1. **416-at-EOF resume hatası:** `.part` dosyası tam boyutuna ulaşmış ama
+   `dest`'e taşınmadan (crash/cancel tam o arada) kesilirse, sonraki resume
+   sunucudan `Range: bytes=<toplam>-` ister — "eklenecek bayt yok" demek olan
+   `416 Range Not Satisfiable` döner, bu FAILED'a düşürülüyordu. Düzeltme:
+   `Content-Range: bytes */<boyut>` ile gerçek boyut doğrulanıp eşleşiyorsa
+   dosya tamamlanmış sayılıyor.
+2. **Asıl suçlu — `resume()` çifte-başlatma yarışı:** `resume()`, aynı
+   indirme için zaten çalışan bir `asyncio.Task` varken tekrar çağrılırsa
+   engellemiyordu — iki coroutine aynı `.part` dosyasına birden yazıp onu
+   bozuyordu. Canlı örnek: Wan'ın `transformer/...00001-of-00002.safetensors`
+   parçası HF'de 4.998.781.576 bayt iken diskte 5.261.145.360 bayt (262MB
+   fazla) olarak bulundu — DB'de `sha256_actual` alanı da (muhtemelen
+   önceki, bozulmamış denemeden kalma) doğru hash'i gösteriyordu, bu da
+   teşhisi bir süre karıştırdı. Düzeltme: `resume()` artık aynı ID için canlı
+   task varsa reddediyor.
+3. **"dest var, .part yok" durumunda boyut doğrulamadan DONE'a çevirme
+   riski:** rename başarılı olup DB güncellemesi kesintiye uğradığında
+   dosyayı ağdan tekrar çekmeden tamamlanmış saymak için eklenen hızlı yol,
+   bilinen `total_bytes` ile eşleşmiyorsa dosyayı bozuk kabul edip siliyor ve
+   normal indirmeye düşüyor (yukarıdaki #2'nin bıraktığı bozuk dosyaları
+   sessizce "tamam" işaretlemesin diye).
+
+Ayrıca tek seferlik bir onarım script'i (`reconcile_stale_downloads.py`)
+yazılıp `paused`/`failed` durumundaki, `.part`'ı olmayan ama `dest`'i doğru
+boyutta duran kayıtlar toplu olarak DONE'a çevrildi.
+
+### Canlı GPU smoke testleri (RTX 5090)
+
+- **CogVideoX-2b** — 480×320, 17 kare, 10 adım, cfg 6.0: **56.2 sn** toplam
+  (model yükleme ~22sn + checkpoint ~16sn + 10 adım ~2.2sn + encode).
+  ffprobe ile doğrulandı: h264, 480×320, 8fps, 17 kare. Ölçülen hız
+  (`_STEPS_PER_SEC["cogvideox"]`): 4.5 adım/sn.
+- **Wan2.1-T2V-1.3B** — 480×256, 17 kare, 10 adım, cfg 5.0: **66.8 sn**
+  toplam. ffprobe ile doğrulandı: h264, 480×256, 8fps, 17 kare. Ölçülen hız
+  (`_STEPS_PER_SEC["wan"]`): 5.0 adım/sn. **Canlı testte bulunan ayrı bir
+  hata:** diffusers'ın `WanPipeline`'ı (`pipeline_wan.py::basic_clean()`)
+  `ftfy.fix_text()`'i, `ftfy` kurulu olmasa bile modül seviyesinde
+  `if is_ftfy_available(): import ftfy` korumasından SONRA koşulsuz çağırıyor
+  — `ftfy` kurulu değilse `NameError: name 'ftfy' is not defined` ile
+  patlıyor (bizim kodumuzda değil, diffusers'ın kendi eksik bağımlılık
+  koruması). Düzeltme: `uv pip install --python envs/image/Scripts/python.exe
+  ftfy` (hafif, saf-Python, torch/diffusers'a dokunmuyor).
+
+### HunyuanVideo/Mochi — bu makinede RAM sınırı (bilinen, açık sınırlama)
+
+**Sonuç: bu makinede canlı test EDİLEMEDİ.** Sebep model boyutu değil (RTX
+5090'ın 32GB VRAM'i rahat yeter) — sistem RAM'i (**15.7 GB toplam**, tipik
+olarak ~9-10GB boş) yetersiz:
+
+| Aile | Diskte toplam boyut |
+|---|---|
+| CogVideoX-2b | 12.8 GB (çalışıyor) |
+| Wan2.1-T2V-1.3B | ~10 GB (çalışıyor) |
+| **HunyuanVideo** | **39.0 GB** |
+| **Mochi-1-preview** | **37.3 GB** |
+
+İlk deneme (`vram_mode="low"` → `enable_sequential_cpu_offload()`) modeli
+ÖNCE tamamen CPU RAM'e yüklüyor, SONRA GPU'ya parça parça veriyor — 39GB'lık
+bir model 15.7GB RAM'e sığmayınca canlı ölçümle doğrulanan bir OOM ile
+segfault (exit 139) veriyordu: boş RAM 10GB'tan 108MB'a düşüp süreç anında
+öldü, bellek hemen geri döndü.
+
+**Denenen düzeltme (`_load_pipeline_split()`, `adapters/video.py`):**
+`vram_mode="low"` artık pipeline'ı bütün olarak yüklemek yerine her ağır
+alt-modeli (`transformer`/`text_encoder`/`vae`) `model_index.json`'dan okuyup
+accelerate'in `device_map`+`max_memory` mekanizmasıyla TEK TEK, doğrudan
+hedef cihaza dağıtıyor — önce GPU'yu doldur, taşanı CPU RAM'e ver, model asla
+CPU'da tam materialize olmuyor. Yolda iki alt-hata daha bulundu:
+
+- `device_map="auto"` hem `transformers` hem `diffusers`'ın
+  `get_balanced_memory()` adımını tetikliyor, bu fonksiyon `max_memory`'deki
+  `"disk"` anahtarını `torch.device(...)` ile ayrıştırmaya çalışıp
+  `RuntimeError` atıyor. `device_map="sequential"` bu adımı tamamen atlıyor
+  (ayrıca GPU'yu önce doldurup taşanı sırayla CPU/disk'e vermesi zaten
+  istediğimiz davranış).
+- Bu düzeltmeyle text_encoder (Llama, ~15GB) doğru şekilde GPU'ya dağıtılıp
+  yükleniyor (nvidia-smi'de 21GB kullanım doğrulandı) — önceki gibi anında
+  rastgele bir noktada çökmüyor.
+
+**Ama tam çözülmedi:** `max_memory`'ye `"disk": "200GiB"` eklenmesine ve
+`offload_folder` verilmesine rağmen transformer'ın checkpoint parçaları
+yüklenirken (6 parçanın ~3'ünde) yine aynı RAM-taşması segfault'u oluyor —
+disk katmanı max_memory'de doğru şekilde tanımlı olsa da, ilk shard okuma
+adımı (accelerate'in `from_pretrained` iç akışı) parçayı diske fiilen
+dispatch etmeden önce CPU RAM'de tutuyor gibi görünüyor. GPU(~32GB)+boş
+RAM(~10GB) ≈ 35GB bütçe, Hunyuan'ın ~39GB'ı için ~4GB kısa kalıyor.
+
+**Kullanıcı kararı (2026-07-20):** RAM yükseltmesi ya da text_encoder
+nicemleme (8-bit, ~15GB→~7.5GB) gibi ciddi bir yatırım yapılana kadar
+HunyuanVideo/Mochi bu makinede canlı kullanılamıyor olarak bırakıldı — Mochi
+(37.3GB) hiç denenmedi çünkü aynı RAM açığını vereceği neredeyse kesin. Kod
+(`_load_pipeline_split`) kalıcı olarak eklendi — daha küçük modellerde veya
+gelecekte RAM artınca faydalı, geri alınmadı.
