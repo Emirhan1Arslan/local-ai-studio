@@ -18,6 +18,7 @@ _REGISTRY: dict[str, str] = {
     "audio": "studio_inference.adapters.audio:AudioAdapter",
     "video": "studio_inference.adapters.video:VideoAdapter",
     "videotool": "studio_inference.adapters.videotool:VideoToolAdapter",
+    "mesh": "studio_inference.adapters.mesh:MeshAdapter",
 }
 
 

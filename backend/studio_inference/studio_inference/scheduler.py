@@ -40,7 +40,15 @@ def _now() -> datetime:
 # Bazı iş türleri ayrı bir venv gerektirmeyecek kadar hafif ek bağımlılık ister
 # (Faz 5 görüntü araçları: torch/transformers zaten "image" venv'inde) — kendi
 # venv'i doğurmak yerine mevcut olanı paylaşır (docs/worker-envs.md).
-_ENV_ALIAS: dict[str, str] = {"imgtool": "image", "video": "image", "videotool": "image"}
+# "mesh" -> "3d": iş türü adı (diğer modaliteler gibi medya-türü ismi) ile
+# fiziksel env klasörü (envs/3d) farklı — TripoSR'ın transformers==4.35.0
+# pini envs/image'ın 4.46.3'üyle çakıştığı için ayrı venv gerekti.
+_ENV_ALIAS: dict[str, str] = {
+    "imgtool": "image",
+    "video": "image",
+    "videotool": "image",
+    "mesh": "3d",
+}
 
 
 def worker_python(kind: str) -> str:

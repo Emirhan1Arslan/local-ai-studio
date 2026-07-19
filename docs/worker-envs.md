@@ -553,16 +553,30 @@ HunyuanVideo/Mochi bu makinede canlı kullanılamıyor olarak bırakıldı — M
 (`_load_pipeline_split`) kalıcı olarak eklendi — daha küçük modellerde veya
 gelecekte RAM artınca faydalı, geri alınmadı.
 
-## Faz 9 — 3d env (envs/3d, AYRI venv — kuruldu, adapter kodu henüz YOK)
+## Faz 9 — 3d env (envs/3d, AYRI venv — TripoSR canlı doğrulandı)
 
 ```bash
 uv venv ~/LocalAIStudio/envs/3d \
   --python "C:\Users\Tars\AppData\Local\Programs\Python\Python310\python.exe" \
   --system-site-packages
 uv pip install --python ~/LocalAIStudio/envs/3d/Scripts/python.exe \
-  "omegaconf==2.3.0" "einops==0.7.0" "trimesh==4.0.5" rembg huggingface-hub \
-  "imageio[ffmpeg]" "xatlas==0.0.9" "transformers==4.35.0"
+  "omegaconf==2.3.0" "einops==0.7.0" rembg "imageio[ffmpeg]" "xatlas==0.0.9" \
+  "transformers==4.35.0" "huggingface-hub>=0.25,<1.0" "trimesh>=4.12" \
+  scikit-image
 ```
+
+**TripoSR'ın orijinal `requirements.txt`'indeki iki pin canlı testte
+sorunlu çıktı, üstteki komutta düzeltilmiş hâliyle var:**
+- `huggingface-hub` (pinsiz bırakılınca transformers==4.35.0'ın izin
+  verdiği EN ESKİ sürüme, 0.17.3'e düştü) — ama `--system-site-packages`
+  ile miras alınan `accelerate` (0.34.2, çok daha yeni) `huggingface_hub.
+  split_torch_state_dict_into_shards`i istiyor, 0.17.3'te yok →
+  `ImportError`. Çözüm: `huggingface-hub>=0.25` — transformers 4.35.0 ile de
+  sorunsuz çalışıyor (o, hub sürümüne karşı gevşek bağlı).
+- `trimesh==4.0.5` (TripoSR'ın pini) GLB dışa aktarımında `ndarray.ptp()`
+  kullanıyor — NumPy 2.0'da kaldırıldı, `numpy==2.2.6` ile `AttributeError`.
+  Çözüm: NumPy'ı düşürmek yerine `trimesh>=4.12`'ye yükseltmek (aktif
+  bakımlı, NumPy 2.x uyumlu).
 
 **Neden ayrı venv (image ile paylaşılmadı):** TripoSR (image-to-3D kademeli
 listenin ilk/en hafif modeli) `transformers==4.35.0`'a sabitlenmiş —
@@ -593,14 +607,34 @@ cmake dizinine ayarlandı — hepsi sırayla ilerledi, son adımda kesin olarak
 
 CUDA Toolkit'in tam kurulumu büyük, sistem geneli bir değişiklik (sadece bir
 venv'e değil) — kullanıcı onayı olmadan yapılmadı. **Uygulanabilir alternatif
-canlı doğrulandı:** `scikit-image`'in saf-Python `measure.marching_cubes()`'i
-(rembg'nin bağımlılığı olarak zaten kurulu, `skimage.measure.marching_cubes`
-16³'lük rastgele bir hacimde sorunsuz çalıştı) — mesh çıkarımı GPU'da değil
-CPU'da, TripoSR'ın asıl sinir ağı çıkarımı (VRAM'in çoğunu kullanan kısım)
-yine RTX 5090'da koşacak; marching cubes yalnızca son geometri işleme
-adımı, darboğaz olması beklenmiyor. `tsr` paketinin mesh-çıkarım kodu bu
-adaptörle değiştirilecek (bir sonraki adım — henüz yapılmadı).
+canlı doğrulandı ve üretime alındı:** `scikit-image`'in saf-Python
+`measure.marching_cubes()`'i — mesh çıkarımı GPU'da değil CPU'da, TripoSR'ın
+asıl sinir ağı çıkarımı (VRAM'in çoğunu kullanan kısım) yine RTX 5090'da
+koşuyor; canlı ölçümde marching cubes darboğaz OLMADI (256³ çözünürlükte
+~2sn, toplam 9.8sn'lik sürenin küçük bir kısmı).
 
 **Kasıtlı olarak kurulmadı:** `gradio`, `moderngl` — TripoSR'ın kendi demo
 UI'sine/önizleme render'ına ait, bu projede zaten React tabanlı bir 3D
-viewer planlandığı için (plan.md Faz 9 adım 4) gerekmiyor.
+viewer planlandığı için (plan.md Faz 9 adım 4) gerekmiyor. `bake_texture.py`
+(moderngl gerektiren doku-pişirme özelliği) bu yüzden kullanılmadı — ilk
+sürüm vertex-color tabanlı mesh üretiyor (GLB bunu destekliyor).
+
+**Vendoring:** TripoSR'ın `tsr` paketi (MIT lisans) `backend/studio_inference/
+studio_inference/vendor/triposr/tsr/`'a kopyalandı (yalnızca çıkarım kodu —
+`run.py`/`gradio_app.py` demo scriptleri değil); `tsr/models/isosurface.py`
+yukarıdaki torchmcubes→scikit-image yamasını içeriyor. Provenance/yama notu:
+`vendor/triposr/NOTICE.md`. `adapters/mesh.py` (`MeshAdapter`,
+`EngineAdapter` sözleşmesi) bu paketi `sys.path`'e ekleyip kullanıyor —
+studio paketlerinin kendi "PYTHONPATH ile kaynaktan import" deseniyle aynı.
+Scheduler'da `mesh` iş türü `_ENV_ALIAS` ile `envs/3d`'ye yönlendiriliyor
+(fiziksel klasör adı iş türü adından farklı, video/imgtool'un `image`'ı
+paylaşmasıyla aynı desen).
+
+**Canlı doğrulama (RTX 5090, `stabilityai/TripoSR`, `chair.png` örnek
+görseli):** arkaplan temizliği (rembg) → sinir ağı çıkarımı → CPU marching
+cubes (mc_resolution=256) → GLB dışa aktarım, uçtan uca **9.8 sn**.
+Üretilen mesh: 42.076 vertex, 84.156 yüz, `trimesh` ile geri yüklenip
+doğrulandı: **watertight=True**, pozitif hacim/alan, makul sınır kutusu —
+scikit-image yamasının doğru geometri ürettiğinin kanıtı (bozuk bir
+marching-cubes eşlemesi neredeyse kesin non-watertight/self-intersecting
+bir mesh üretirdi).
