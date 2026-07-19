@@ -275,3 +275,26 @@ async def hf_list_repo_files(
     if resp.status_code != 200:
         raise DownloadError(f"HF repo bulunamadı: {repo_id!r} ({resp.status_code})")
     return [s["rfilename"] for s in resp.json().get("siblings", [])]
+
+
+async def hf_search_models(
+    query: str,
+    pipeline_tag: str = "",
+    limit: int = 30,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[dict]:
+    """HF Hub'da model arar (Keşfet paneli). Ham HF şemasını döner; rota katmanı
+    kendi çıktı modeline dönüştürür."""
+    client_kwargs: dict = {"timeout": httpx.Timeout(20)}
+    if transport is not None:
+        client_kwargs["transport"] = transport
+    params: dict[str, str | int] = {"sort": "downloads", "direction": -1, "limit": limit}
+    if query:
+        params["search"] = query
+    if pipeline_tag:
+        params["pipeline_tag"] = pipeline_tag
+    async with httpx.AsyncClient(**client_kwargs) as client:
+        resp = await client.get("https://huggingface.co/api/models", params=params)
+    if resp.status_code != 200:
+        raise DownloadError(f"HF arama başarısız: {resp.status_code}")
+    return resp.json()

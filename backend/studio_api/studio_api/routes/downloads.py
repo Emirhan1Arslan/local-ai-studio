@@ -18,7 +18,13 @@ from sqlalchemy import select
 from studio_core.config import MODEL_SUBDIRS, get_settings
 from studio_core.db import session_scope
 from studio_core.models import Download
-from studio_models.downloader import DownloadError, hf_list_repo_files, hf_resolve_url, manager
+from studio_models.downloader import (
+    DownloadError,
+    hf_list_repo_files,
+    hf_resolve_url,
+    hf_search_models,
+    manager,
+)
 
 router = APIRouter(prefix="/v1/downloads", tags=["downloads"])
 
@@ -56,6 +62,16 @@ class DownloadOut(BaseModel):
 
 class ActionResult(BaseModel):
     ok: bool
+
+
+class HfModelOut(BaseModel):
+    id: str
+    pipeline_tag: str = ""
+    library_name: str = ""
+    downloads: int = 0
+    likes: int = 0
+    license: str = ""
+    gated: bool = False
 
 
 def _bad_request(message: str):
@@ -111,6 +127,48 @@ async def create_download(req: DownloadRequest) -> DownloadOut:
         url, dest, source=source, sha256=req.sha256, headers=headers
     )
     return await _get_out(download_id)
+
+
+@router.get("/search")
+async def search_hf_models(
+    q: str = "", pipeline_tag: str = "", limit: int = 30
+) -> list[HfModelOut]:
+    """Keşfet paneli: Hugging Face Hub'da model arar (plan.md Faz 2'nin
+    'Model Browser UI: filtre/arama' hedefini kaynak seçim aşamasına taşır)."""
+    if limit < 1 or limit > 50:
+        _bad_request("limit 1-50 arasında olmalı")
+    try:
+        raw = await hf_search_models(q, pipeline_tag, limit, transport=manager._transport)
+    except (DownloadError, httpx.HTTPError) as exc:
+        _bad_request(str(exc))
+
+    out: list[HfModelOut] = []
+    for m in raw:
+        license_tag = next(
+            (t.removeprefix("license:") for t in m.get("tags", []) if t.startswith("license:")), ""
+        )
+        out.append(
+            HfModelOut(
+                id=m["id"],
+                pipeline_tag=m.get("pipeline_tag") or "",
+                library_name=m.get("library_name") or "",
+                downloads=m.get("downloads", 0),
+                likes=m.get("likes", 0),
+                license=license_tag,
+                gated=bool(m.get("gated", False)),
+            )
+        )
+    return out
+
+
+@router.get("/files")
+async def list_hf_repo_files(repo_id: str) -> list[str]:
+    """Bir HF repo'sunun dosya listesi — Keşfet panelinde tek dosya mı yoksa tüm
+    repo'yu mu (snapshot) indireceğine karar vermek için kullanılır."""
+    try:
+        return await hf_list_repo_files(repo_id, transport=manager._transport)
+    except (DownloadError, httpx.HTTPError) as exc:
+        _bad_request(str(exc))
 
 
 @router.post("/snapshot")

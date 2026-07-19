@@ -8,6 +8,7 @@ import {
 import "dockview-react/dist/styles/dockview.css";
 import ConsolePanel from "./panels/ConsolePanel";
 import DownloadsPanel from "./panels/DownloadsPanel";
+import ExplorePanel from "./panels/ExplorePanel";
 import GeneratePanel from "./panels/GeneratePanel";
 import ModelsPanel from "./panels/ModelsPanel";
 import QueuePanel from "./panels/QueuePanel";
@@ -24,6 +25,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   console: ConsolePanel,
   models: ModelsPanel,
   downloads: DownloadsPanel,
+  explore: ExplorePanel,
   queue: QueuePanel,
   vram: VramPanel,
   generate: GeneratePanel,
@@ -35,6 +37,7 @@ const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "generate", title: "Üretim", near: "models" },
   { id: "tools", title: "Araçlar", near: "generate" },
   { id: "downloads", title: "İndirmeler", near: "models" },
+  { id: "explore", title: "Keşfet", near: "downloads" },
   { id: "queue", title: "Kuyruk", near: "models" },
   { id: "vram", title: "VRAM", near: "system" },
   { id: "settings", title: "Ayarlar", near: "system" },

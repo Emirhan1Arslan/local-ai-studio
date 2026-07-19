@@ -8,7 +8,7 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-const SUBDIRS = [
+export const SUBDIRS = [
   "llm",
   "checkpoints",
   "image",

@@ -23,12 +23,45 @@ SHA = hashlib.sha256(DATA).hexdigest()
 SNAPSHOT_FILES = ["config.json", "model.safetensors", "preprocessor_config.json"]
 
 
+SEARCH_RESULTS = [
+    {
+        "id": "ZhengPeng7/BiRefNet",
+        "pipeline_tag": "image-segmentation",
+        "library_name": "birefnet",
+        "downloads": 699873,
+        "likes": 606,
+        "tags": ["safetensors", "license:mit"],
+    },
+    {
+        "id": "gated/model",
+        "pipeline_tag": "text-to-image",
+        "downloads": 10,
+        "likes": 1,
+        "tags": [],
+        "gated": True,
+    },
+]
+
+
 async def fake_server(scope, receive, send):
     """/file: Range destekli · /slow: parça parça yavaş akış · /norange: Range'i yok sayar ·
-    /api/models/<repo>: HF repo dosya listesi (snapshot indirme testleri için)."""
+    /api/models: HF arama (Keşfet paneli) · /api/models/<repo>: HF repo dosya listesi."""
     assert scope["type"] == "http"
     path = scope["path"]
     headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+
+    if path == "/api/models":
+        import json
+
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": json.dumps(SEARCH_RESULTS).encode()})
+        return
 
     if path.startswith("/api/models/"):
         import json
@@ -171,6 +204,35 @@ def test_invalid_subdir_rejected(dl_client):
     r = dl_client.post(
         "/v1/downloads", json={"url": "http://fake/file", "subdir": "hack", "filename": "x.bin"}
     )
+    assert r.status_code == 400
+
+
+def test_hf_search_returns_curated_fields(dl_client):
+    r = dl_client.get("/v1/downloads/search", params={"q": "birefnet"})
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 2
+    first = rows[0]
+    assert first["id"] == "ZhengPeng7/BiRefNet"
+    assert first["pipeline_tag"] == "image-segmentation"
+    assert first["downloads"] == 699873
+    assert first["license"] == "mit"  # tags içindeki "license:mit"tan çıkarıldı
+    assert rows[1]["gated"] is True
+
+
+def test_hf_search_limit_bounds(dl_client):
+    r = dl_client.get("/v1/downloads/search", params={"q": "x", "limit": 999})
+    assert r.status_code == 400
+
+
+def test_hf_list_files_endpoint(dl_client):
+    r = dl_client.get("/v1/downloads/files", params={"repo_id": "org/some-repo"})
+    assert r.status_code == 200
+    assert r.json() == SNAPSHOT_FILES
+
+
+def test_hf_list_files_repo_not_found(dl_client):
+    r = dl_client.get("/v1/downloads/files", params={"repo_id": "yok/repo"})
     assert r.status_code == 400
 
 

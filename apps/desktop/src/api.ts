@@ -267,6 +267,40 @@ export interface SnapshotRequest {
   revision?: string;
 }
 
+export interface HfModelInfo {
+  id: string;
+  pipeline_tag: string;
+  library_name: string;
+  downloads: number;
+  likes: number;
+  license: string;
+  gated: boolean;
+}
+
+export async function searchHfModels(
+  q: string,
+  pipelineTag = "",
+  limit = 30,
+): Promise<HfModelInfo[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  if (pipelineTag) params.set("pipeline_tag", pipelineTag);
+  const r = await req(`/v1/downloads/search?${params}`);
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `search ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function fetchHfRepoFiles(repoId: string): Promise<string[]> {
+  const r = await req(`/v1/downloads/files?${new URLSearchParams({ repo_id: repoId })}`);
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `files ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function createSnapshotDownload(request: SnapshotRequest): Promise<DownloadInfo[]> {
   const r = await req("/v1/downloads/snapshot", {
     method: "POST",
