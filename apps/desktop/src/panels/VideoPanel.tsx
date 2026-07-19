@@ -15,7 +15,31 @@ import { useStudio } from "../state";
 
 type Mode = "generate" | "edit";
 type GenMode = "t2v" | "i2v";
-type EditOp = "trim" | "concat" | "speed" | "add_audio" | "convert";
+type EditOp = "trim" | "concat" | "speed" | "add_audio" | "convert" | "upscale";
+type Family = "ltx" | "wan" | "cogvideox" | "hunyuan" | "mochi";
+
+// plan.md Faz 8 adım 1'in kademeli listesi: LTX-Video → Wan 2.x → CogVideoX →
+// Hunyuan Video → Mochi (Pyramid Flow/SkyReels diffusers'ın yerleşik pipeline'ları
+// arasında yok, bu dilimde uygulanmadı). Varsayılanlar backend'deki video.py'nin
+// _FAMILIES tablosuyla birebir eşleşir.
+const FAMILIES: [Family, string][] = [
+  ["ltx", "LTX-Video (en hızlı, düşük VRAM)"],
+  ["wan", "Wan 2.1"],
+  ["cogvideox", "CogVideoX"],
+  ["hunyuan", "Hunyuan Video (ağır)"],
+  ["mochi", "Mochi (en ağır)"],
+];
+
+const FAMILY_DEFAULTS: Record<
+  Family,
+  { width: number; height: number; numFrames: number; steps: number; cfg: number; i2v: boolean }
+> = {
+  ltx: { width: 704, height: 480, numFrames: 121, steps: 30, cfg: 3.0, i2v: true },
+  wan: { width: 832, height: 480, numFrames: 81, steps: 50, cfg: 5.0, i2v: true },
+  cogvideox: { width: 720, height: 480, numFrames: 49, steps: 50, cfg: 6.0, i2v: true },
+  hunyuan: { width: 960, height: 544, numFrames: 65, steps: 30, cfg: 6.0, i2v: false },
+  mochi: { width: 848, height: 480, numFrames: 19, steps: 64, cfg: 4.5, i2v: false },
+};
 
 function outUrl(path: string): string {
   return apiUrl(`/outputs/${path.split(/[\\/]/).pop()}`);
@@ -25,7 +49,8 @@ export default function VideoPanel() {
   const { events, connected } = useStudio();
   const [mode, setMode] = useState<Mode>("generate");
 
-  // Üretim (LTX-Video)
+  // Üretim (kademeli aile listesi)
+  const [family, setFamily] = useState<Family>("ltx");
   const [genMode, setGenMode] = useState<GenMode>("t2v");
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
   const [modelPath, setModelPath] = useState("");
@@ -43,7 +68,10 @@ export default function VideoPanel() {
 
   // Düzenleme (ffmpeg)
   const [editOp, setEditOp] = useState<EditOp>("trim");
-  const [srcVideo, setSrcVideo] = useState<{ path: string; name: string } | null>(null);
+  const [srcVideo, setSrcVideo] = useState<{ path: string; name: string; previewUrl: string } | null>(
+    null,
+  );
+  const [srcDuration, setSrcDuration] = useState(0);
   const [concatVideos, setConcatVideos] = useState<{ path: string; name: string }[]>([]);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState<number | "">("");
@@ -51,14 +79,17 @@ export default function VideoPanel() {
   const [audioFile, setAudioFile] = useState<{ path: string; name: string } | null>(null);
   const [audioMode, setAudioMode] = useState<"replace" | "mix">("replace");
   const [convertFormat, setConvertFormat] = useState("mp4");
+  const [upscaleModels, setUpscaleModels] = useState<ModelInfo[]>([]);
+  const [upscaleModelPath, setUpscaleModelPath] = useState("");
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
-  const [progress, setProgress] = useState<Record<string, { value: number; message: string }>>(
-    {},
-  );
+  const [progress, setProgress] = useState<
+    Record<string, { value: number; message: string; preview?: string }>
+  >({});
   const [formError, setFormError] = useState("");
   const lastEvent = useRef(0);
+  const scrubRef = useRef<HTMLVideoElement>(null);
 
   const refresh = () => {
     fetchJobs()
@@ -80,16 +111,41 @@ export default function VideoPanel() {
     if (!connected) return;
     refresh();
     fetchModels("video").then(setVideoModels).catch(() => setVideoModels([]));
+    fetchModels("upscale").then(setUpscaleModels).catch(() => setUpscaleModels([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
+
+  // Model Browser'daki her video modeli ayrı bir aileye ait (LTX-Video, CogVideoX-2b,
+  // Wan2.1-T2V-1.3B-Diffusers, ...) — isimden basit bir ipucuyla mevcut aileye filtrelenir.
+  const familyModels = videoModels.filter((m) => m.name.toLowerCase().includes(family));
+
+  const selectFamily = (f: Family) => {
+    setFamily(f);
+    setModelPath("");
+    const d = FAMILY_DEFAULTS[f];
+    setWidth(d.width);
+    setHeight(d.height);
+    setNumFrames(d.numFrames);
+    setSteps(d.steps);
+    setCfg(d.cfg);
+    if (!d.i2v) setGenMode("t2v");
+  };
 
   useEffect(() => {
     let needsRefresh = false;
     for (let i = lastEvent.current; i < events.length; i++) {
       const e = events[i];
       if (e.topic === "job.progress") {
-        const { id, value, message } = e.data as { id: string; value: number; message: string };
-        setProgress((p) => ({ ...p, [id]: { value, message } }));
+        const { id, value, message, preview } = e.data as {
+          id: string;
+          value: number;
+          message: string;
+          preview?: string;
+        };
+        setProgress((p) => ({
+          ...p,
+          [id]: { value, message, preview: preview ?? p[id]?.preview },
+        }));
       } else if (e.topic.startsWith("job.")) {
         needsRefresh = true;
       }
@@ -114,9 +170,15 @@ export default function VideoPanel() {
 
   const pickSrcVideo = async (file: File) => {
     setFormError("");
+    // Tarayıcının kendi <video> öğesiyle kare-kare önizleme için yerel blob URL —
+    // yükleme bitmeden de anında scrub edilebilir (ayrı bir sunucu isteği gerekmez).
+    const previewUrl = URL.createObjectURL(file);
+    setSrcVideo({ path: "", name: file.name, previewUrl });
+    setTrimStart(0);
+    setTrimEnd("");
     try {
       const up = await uploadVideoFile(file);
-      setSrcVideo({ path: up.path, name: file.name });
+      setSrcVideo({ path: up.path, name: file.name, previewUrl });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     }
@@ -156,6 +218,7 @@ export default function VideoPanel() {
         return;
       }
       const params: Record<string, unknown> = {
+        family,
         mode: genMode,
         prompt: prompt.trim(),
         negative_prompt: negative.trim(),
@@ -188,16 +251,16 @@ export default function VideoPanel() {
       }
       params.video_paths = concatVideos.map((v) => v.path);
     } else if (editOp === "add_audio") {
-      if (!srcVideo || !audioFile) {
-        setFormError("hem video hem ses dosyası yükleyin");
+      if (!srcVideo?.path || !audioFile) {
+        setFormError("hem video hem ses dosyası yükleyin (yükleme bitene kadar bekleyin)");
         return;
       }
       params.video_path = srcVideo.path;
       params.audio_path = audioFile.path;
       params.mode = audioMode;
     } else {
-      if (!srcVideo) {
-        setFormError("bir video dosyası yükleyin");
+      if (!srcVideo?.path) {
+        setFormError("bir video dosyası yükleyin (yükleme bitene kadar bekleyin)");
         return;
       }
       params.video_path = srcVideo.path;
@@ -208,6 +271,12 @@ export default function VideoPanel() {
         params.factor = speedFactor;
       } else if (editOp === "convert") {
         params.format = convertFormat;
+      } else if (editOp === "upscale") {
+        if (!upscaleModelPath) {
+          setFormError("upscale için Model Browser'dan bir ESRGAN modeli seçin");
+          return;
+        }
+        params.model_path = upscaleModelPath;
       }
     }
     try {
@@ -223,7 +292,7 @@ export default function VideoPanel() {
       <form className="dl-form" onSubmit={run}>
         <div className="mode-tabs">
           <button type="button" className={mode === "generate" ? "active" : ""} onClick={() => setMode("generate")}>
-            üret (LTX-Video)
+            üret
           </button>
           <button type="button" className={mode === "edit" ? "active" : ""} onClick={() => setMode("edit")}>
             düzenle (ffmpeg)
@@ -232,13 +301,24 @@ export default function VideoPanel() {
 
         {mode === "generate" && (
           <>
+            <div className="dl-row">
+              <select value={family} onChange={(e) => selectFamily(e.target.value as Family)}>
+                {FAMILIES.map(([f, label]) => (
+                  <option key={f} value={f}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="mode-tabs">
               <button type="button" className={genMode === "t2v" ? "active" : ""} onClick={() => setGenMode("t2v")}>
                 metinden video
               </button>
-              <button type="button" className={genMode === "i2v" ? "active" : ""} onClick={() => setGenMode("i2v")}>
-                görselden video
-              </button>
+              {FAMILY_DEFAULTS[family].i2v && (
+                <button type="button" className={genMode === "i2v" ? "active" : ""} onClick={() => setGenMode("i2v")}>
+                  görselden video
+                </button>
+              )}
             </div>
             {genMode === "i2v" && (
               <div className="dl-row">
@@ -267,8 +347,8 @@ export default function VideoPanel() {
             />
             <div className="dl-row">
               <select value={modelPath} onChange={(e) => setModelPath(e.target.value)}>
-                <option value="">Lightricks/LTX-Video (varsayılan, ilk kullanımda indirir)</option>
-                {videoModels.map((m) => (
+                <option value="">varsayılan (ilk kullanımda indirir)</option>
+                {familyModels.map((m) => (
                   <option key={m.id} value={m.path}>
                     {m.name} — Model Browser
                   </option>
@@ -335,6 +415,7 @@ export default function VideoPanel() {
                 <option value="speed">hız</option>
                 <option value="add_audio">ses ekle</option>
                 <option value="convert">format dönüştür</option>
+                <option value="upscale">büyüt</option>
               </select>
             </div>
 
@@ -371,7 +452,16 @@ export default function VideoPanel() {
                 </label>
                 {srcVideo && <span className="muted">{srcVideo.name}</span>}
                 {srcVideo && (
-                  <button type="button" onClick={() => setSrcVideo(null)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      URL.revokeObjectURL(srcVideo.previewUrl);
+                      setSrcVideo(null);
+                      setSrcDuration(0);
+                      setTrimStart(0);
+                      setTrimEnd("");
+                    }}
+                  >
                     kaldır
                   </button>
                 )}
@@ -379,22 +469,79 @@ export default function VideoPanel() {
             )}
 
             {editOp === "trim" && (
-              <div className="dl-row">
-                <label className="gen-num">
-                  başlangıç (sn){" "}
-                  <input type="number" min={0} step={0.1} value={trimStart} onChange={(e) => setTrimStart(Number(e.target.value))} />
-                </label>
-                <label className="gen-num">
-                  bitiş (sn, boş = sona kadar){" "}
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={trimEnd}
-                    onChange={(e) => setTrimEnd(e.target.value === "" ? "" : Number(e.target.value))}
-                  />
-                </label>
-              </div>
+              <>
+                {srcVideo && (
+                  <div className="mask-wrap">
+                    <video
+                      ref={scrubRef}
+                      src={srcVideo.previewUrl}
+                      className="video-scrub"
+                      controls
+                      onLoadedMetadata={(e) => {
+                        const dur = e.currentTarget.duration || 0;
+                        setSrcDuration(dur);
+                        if (trimEnd === "") setTrimEnd(Number(dur.toFixed(1)));
+                      }}
+                    />
+                    {srcDuration > 0 && (
+                      <div className="dl-row">
+                        <label className="gen-num" style={{ flex: 1 }}>
+                          başlangıç: {trimStart.toFixed(1)}sn
+                          <input
+                            type="range"
+                            min={0}
+                            max={srcDuration}
+                            step={0.1}
+                            value={trimStart}
+                            onChange={(e) => {
+                              const v = Math.min(Number(e.target.value), typeof trimEnd === "number" ? trimEnd : srcDuration);
+                              setTrimStart(v);
+                              if (scrubRef.current) scrubRef.current.currentTime = v;
+                            }}
+                          />
+                        </label>
+                        <label className="gen-num" style={{ flex: 1 }}>
+                          bitiş: {trimEnd === "" ? srcDuration.toFixed(1) : trimEnd.toFixed(1)}sn
+                          <input
+                            type="range"
+                            min={0}
+                            max={srcDuration}
+                            step={0.1}
+                            value={trimEnd === "" ? srcDuration : trimEnd}
+                            onChange={(e) => {
+                              const v = Math.max(Number(e.target.value), trimStart);
+                              setTrimEnd(v);
+                              if (scrubRef.current) scrubRef.current.currentTime = v;
+                            }}
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="dl-row">
+                  <label className="gen-num">
+                    başlangıç (sn){" "}
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={trimStart}
+                      onChange={(e) => setTrimStart(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="gen-num">
+                    bitiş (sn, boş = sona kadar){" "}
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={trimEnd}
+                      onChange={(e) => setTrimEnd(e.target.value === "" ? "" : Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+              </>
             )}
 
             {editOp === "speed" && (
@@ -441,6 +588,24 @@ export default function VideoPanel() {
                 </select>
               </div>
             )}
+
+            {editOp === "upscale" && (
+              <div className="dl-row">
+                <select value={upscaleModelPath} onChange={(e) => setUpscaleModelPath(e.target.value)}>
+                  <option value="" disabled>
+                    {upscaleModels.length === 0
+                      ? "upscale modeli bulunamadı — İndirmeler panelinden indirin"
+                      : "model seç"}
+                  </option>
+                  {upscaleModels.map((m) => (
+                    <option key={m.id} value={m.path}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted">her kare ayrı ayrı büyütülür — uzun videolarda yavaş olabilir</span>
+              </div>
+            )}
           </>
         )}
 
@@ -462,6 +627,9 @@ export default function VideoPanel() {
           <div className="dl-bar">
             <div className="dl-fill" style={{ width: `${((runningPreview?.value ?? 0) * 100).toFixed(0)}%` }} />
           </div>
+          {runningPreview?.preview && (
+            <img className="live-preview" src={runningPreview.preview} alt="ara kare önizlemesi" />
+          )}
         </div>
       )}
 

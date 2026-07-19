@@ -1,11 +1,15 @@
-"""Video düzenleme adapter'ı (Faz 8 adım 4): FFmpeg tabanlı kes/birleştir/hız/ses/format.
+"""Video düzenleme adapter'ı (Faz 8 adım 4): FFmpeg tabanlı kes/birleştir/hız/ses/format
++ kare bazlı büyütme (upscale, imgtool.py'nin spandrel/ESRGAN motorunu yeniden kullanır).
 
 DİKKAT: Bu modül worker env'inde (envs/image ile paylaşılır — scheduler._ENV_ALIAS)
-çalışır. 3.11+ sözdizimi KULLANMA. Ağır bağımlılık yok — yalnızca subprocess ile
-FFmpeg çağırır (bkz. adapters/_ffmpeg.py, Faz 7'de kurulan build).
+çalışır. 3.11+ sözdizimi KULLANMA.
+
+**RIFE kare interpolasyonu bu dilimde YOK:** `rife-ncnn-vulkan-python` PyPI'da yalnızca
+kaynak dağıtım (.tar.gz) olarak mevcut — Vulkan SDK + C++ derleyici zinciri gerektiriyor,
+bu ortamda güvenle derlenemedi. plan.md'ye not düşüldü (Faz 8 kalanları).
 
 params:
-- op: trim | concat | speed | add_audio | convert (zorunlu)
+- op: trim | concat | speed | add_audio | convert | upscale (zorunlu)
 
 trim:
 - video_path (zorunlu) · start (sn, vars. 0) · end (sn, opsiyonel — yoksa sona kadar)
@@ -22,6 +26,11 @@ add_audio:
 convert:
 - video_path (zorunlu) · format: mp4 (vars.) | mov | avi | gif
 
+upscale:
+- video_path · model_path (ikisi de zorunlu — Model Browser'dan bir ESRGAN modeli,
+  imgtool.py'nin upscale'iyle aynı model havuzu) · her kare ayrı ayrı büyütülüp
+  yeniden kodlanır (ses izi varsa olduğu gibi kopyalanır)
+
 Tüm op'lar: output_path (zorunlu, format ile aynı uzantı)
 """
 
@@ -31,7 +40,14 @@ import subprocess
 from collections.abc import Iterator
 from typing import Any
 
-from studio_inference.adapters._ffmpeg import ffmpeg_exe, has_audio_stream
+from studio_inference.adapters._ffmpeg import ffmpeg_exe, ffprobe_exe, has_audio_stream
+
+
+def _import_error(hint: str, exc: ImportError) -> RuntimeError:
+    return RuntimeError(
+        f"videotool worker ortamı eksik ({hint}). "
+        "Kurulum reçetesi: docs/worker-envs.md  |  " + str(exc)
+    )
 
 
 def _run_ffmpeg(args: list[str]) -> None:
@@ -42,8 +58,30 @@ def _run_ffmpeg(args: list[str]) -> None:
 
 
 class VideoToolAdapter:
+    def __init__(self) -> None:
+        self._cache: dict[str, Any] = {}  # "upscale:model_path" -> yüklü spandrel modeli
+
     def load(self, model_path: str, **kwargs: Any) -> None:
         pass  # model gerektirmez — saf FFmpeg subprocess çağrıları
+
+    def _get_upscaler(self, model_path: str):
+        # imgtool.py::_get_upscaler ile birebir aynı desen (spandrel — basicsr gerektirmez).
+        key = f"upscale:{model_path}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            import torch
+            from spandrel import ModelLoader
+        except ImportError as exc:
+            raise _import_error("spandrel bulunamadı", exc) from exc
+
+        model = ModelLoader().load_from_file(model_path)
+        model.eval()
+        if torch.cuda.is_available():
+            model.to("cuda")
+        self._cache[key] = model
+        return model
 
     def infer(self, params: dict) -> Iterator[dict]:
         op = params.get("op", "")
@@ -203,13 +241,85 @@ class VideoToolAdapter:
             else:
                 _run_ffmpeg(["-i", video_path, output_path])
 
+        elif op == "upscale":
+            video_path = str(params.get("video_path", ""))
+            model_path = str(params.get("model_path", ""))
+            if not video_path:
+                raise RuntimeError("video_path gerekli")
+            if not model_path:
+                raise RuntimeError(
+                    "upscale için model_path gerekli (Model Browser'dan bir ESRGAN modeli seçin)"
+                )
+            yield {"event": "progress", "value": 0.15, "message": "model yükleniyor…"}
+            model = self._get_upscaler(model_path)
+
+            import os
+            import tempfile
+
+            import torch
+            import torchvision.transforms.functional as TF
+            from PIL import Image
+
+            with tempfile.TemporaryDirectory() as tmp:
+                _run_ffmpeg(["-i", video_path, f"{tmp}/%06d.png"])
+                frame_files = sorted(f for f in os.listdir(tmp) if f.endswith(".png"))
+                if not frame_files:
+                    raise RuntimeError("videodan kare çıkarılamadı")
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                out_dir = os.path.join(tmp, "out")
+                os.makedirs(out_dir, exist_ok=True)
+                for i, fname in enumerate(frame_files):
+                    img = Image.open(os.path.join(tmp, fname)).convert("RGB")
+                    inp = TF.to_tensor(img).unsqueeze(0).to(device)
+                    with torch.no_grad():
+                        out_t = model(inp)
+                    TF.to_pil_image(out_t.squeeze(0).clamp(0, 1).cpu()).save(
+                        os.path.join(out_dir, fname)
+                    )
+                    yield {
+                        "event": "progress",
+                        "value": 0.2 + 0.7 * (i + 1) / len(frame_files),
+                        "message": f"kare {i + 1}/{len(frame_files)} büyütülüyor…",
+                    }
+
+                yield {"event": "progress", "value": 0.95, "message": "yeniden kodlanıyor…"}
+                fps_probe = subprocess.run(
+                    [
+                        ffprobe_exe(),
+                        "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", video_path,
+                    ],
+                    capture_output=True, text=True,
+                )
+                fps_str = fps_probe.stdout.strip() or "24/1"
+                encode_args = ["-framerate", fps_str, "-i", f"{out_dir}/%06d.png"]
+                if has_audio_stream(video_path):
+                    encode_args += [
+                        "-i", video_path, "-map", "0:v", "-map", "1:a", "-c:a", "copy",
+                    ]
+                encode_args += [
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart", output_path,
+                ]
+                _run_ffmpeg(encode_args)
+
         else:
-            raise RuntimeError(f"bilinmeyen op: {op!r} (trim|concat|speed|add_audio|convert)")
+            raise RuntimeError(
+                f"bilinmeyen op: {op!r} (trim|concat|speed|add_audio|convert|upscale)"
+            )
 
         yield {"event": "done", "result": {"path": output_path, "op": op}}
 
     def unload(self) -> None:
-        pass
+        self._cache = {}
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
     def vram_estimate(self, params: dict) -> int:
-        return 0  # yalnızca CPU/FFmpeg subprocess — GPU/VRAM kullanmaz
+        # upscale (spandrel/ESRGAN) hariç yalnızca CPU/FFmpeg subprocess kullanır
+        return 2000 if params.get("op") == "upscale" else 0

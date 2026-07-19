@@ -100,7 +100,8 @@ def test_multi_component_pipeline_collapses_to_one_model(client):
     assert len(models) == 1
     assert models[0]["name"] == "MyVideoModel"
     assert models[0]["size_bytes"] == sum(f.stat().st_size for f in files)
-    assert models[0]["meta"]["components"] == [f.name for f in files]  # sıralı: transformer önce, vae sonra
+    # sıralı: transformer önce, vae sonra
+    assert models[0]["meta"]["components"] == [f.name for f in files]
 
 
 def test_same_folder_multi_weight_collapses_to_one_model(client):

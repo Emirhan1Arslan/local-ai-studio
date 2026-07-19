@@ -341,9 +341,13 @@ desene (sdxl.py'nin `_resolve_repo`'suyla aynı: `config.json` kardeşi varsa ü
 klasör) düşer, o da yoksa yol/HF repo id'sini olduğu gibi kullanır. Üç farklı
 bileşen dosyası üzerinde test edildi, üçü de aynı köke çözüldü.
 
-UI'da 7 satırlık ham liste yerine tek/temiz bir seçim için `VideoPanel.tsx`
-yalnızca `vae` bileşenini (her pipeline'da tam olarak bir dosya, parçalanmamış)
-gösterip görünen adı üst klasörden (gerçek model adı, ör. "LTX-Video") türetiyor.
+**Not (sonradan basitleşti):** İlk sürümde UI'da 7 satırlık ham listeyi
+gizlemek için `VideoPanel.tsx`'te yalnızca `vae` bileşenini filtreleyen bir
+client-side geçici çözüm vardı. `studio_models/metadata.py::group_key()`
+eklenince (bkz. plan.md Faz 2 düzeltmesi) tarayıcı zaten TEK bir "LTX-Video"
+kaydı döndürmeye başladı — bu client-side filtre artık gereksizdi ve
+kaldırıldı, `VideoPanel.tsx` şimdi `fetchModels("video")` sonucunu doğrudan
+kullanıyor.
 
 **Bu makinede canlı olarak yerleştirildi:** `models/video/LTX-Video/` (indirilen
 ~27 GB'lık tam snapshot, HF cache'inden doğrudan kopyalandı — indirme motoru
@@ -351,3 +355,74 @@ yeniden çalıştırılmadı, Faz 7'deki ses modelleri deseniyle aynı). Doğrul
 `HF_HUB_OFFLINE=1` + boş `HF_HOME` ile, Model Browser'dan seçilmiş gibi bir
 bileşen dosyası `model_path` olarak verilip gerçek bir üretim hiçbir ağ
 isteği yapmadan başarıyla tamamlandı.
+
+### Faz 8 — kademeli model listesi genişletmesi (Wan/CogVideoX/Hunyuan/Mochi)
+
+**Diffusers pin güncellemesi (0.32.2 → 0.33.1):** Wan 2.x diffusers'ta ancak
+0.33+ ile geldi. `--no-deps` ile kuruldu (metadata kontrolü: `transformers`
+yalnızca `extra == "dev"/"test"` altında isteniyor, taban kuruluma etkisi yok).
+Canlı regresyon: `torch.__file__`/`transformers.__file__` hâlâ sistem yolunu
+gösteriyor; SDXL (txt2img, 4 adım) VE LTX-Video (t2v, 8 adım) ikisi de
+0.33.1 altında sorunsuz üretim yaptı — mevcut hiçbir pipeline bozulmadı.
+
+**Mimari:** `adapters/video.py`'deki `_FAMILIES` tablosu artık 5 aileyi
+(ltx/wan/cogvideox/hunyuan/mochi) tek bir `VideoAdapter` üzerinden yönetiyor —
+her aile kendi pipeline sınıflarını (`t2v_cls`/`i2v_cls`), varsayılan HF
+repo'sunu, `negative_prompt` desteğini (Hunyuan'da yok) ve varsayılan
+çözünürlük/kare/adım/CFG değerlerini tanımlıyor. `_resolve_pipeline_root()`
+üst klasör arama derinliği 3'ten 4'e çıkarıldı (Mochi/Hunyuan'ın daha derin
+transformer/text_encoder yapıları için).
+
+**Adım 2 (uzun iş yönetimi) — canlıda LTX ile doğrulandı:**
+- Video/videotool işleri, istemci açıkça belirtmediyse (vars. 0) öncelik -1'e
+  düşer (`routes/jobs.py::_create_job_row`) — hızlı iş türleri kuyrukta önce
+  koşar.
+- **Ara kare önizlemesi:** `_latent_preview_jpeg()` — birkaç adımda bir,
+  mevcut latent'in ilk karesi pipeline'ın KENDİ VAE'siyle gerçek decode
+  edilip küçük bir JPEG önizlemesi üretiliyor (SDXL'in ucuz doğrusal
+  yaklaşımının aksine — video VAE'leri bunu desteklemiyor). LTX'e özgü iki
+  gerçek hata canlı testte yakalanıp düzeltildi: (1) LTX latentleri
+  düzleştirilmiş/patchified `[B,S,D]` tutuyor, pipeline'ın kendi
+  `_unpack_latents`/`_denormalize_latents` yardımcıları gerekiyor; (2)
+  latentler fp32, VAE bf16 — decode'dan önce `lat.to(vae.dtype)` gerekti.
+  Canlı doğrulama: üretilen önizleme JPEG'i gerçekten "kırmızı spor araba
+  dağ yolunda" istemine uyan tutarlı bir görüntüydü.
+- Tahmini süre göstergesi: `estimate_seconds()` — LTX için ölçülen (13
+  adım/sn), diğer 4 aile için model boyutuna göre kaba tahmin (canlı
+  ölçüldükçe güncellenecek).
+
+**Adım 3 (bellek stratejileri) — otomatik çözünürlük önerisi:**
+`recommend_settings()` toplam VRAM'i algılar, ailenin kaba tahminine göre
+yetersizse çözünürlük/kare sayısını orantılı küçültüp `vram_mode`'u en az
+`balanced`'a yükseltir. 32 GB'lık bu makinede LTX için devreye girmiyor
+(zaten yarısından azını kullanıyor); torch yokken (test ortamı gibi) güvenli
+no-op'a düşer. fp8 nicemleme bu dilimde YOK — `torchao` + RTX 5090
+(Blackwell) özel doğrulama gerektiriyor, kapsam dışı bırakıldı.
+
+**Adım 4 (video upscale) — canlıda doğrulandı:** `videotool.py`'ye `upscale`
+op'u eklendi — imgtool.py'nin spandrel/ESRGAN motorunu birebir yeniden
+kullanıyor (kareleri FFmpeg ile PNG'ye çıkarır, her birini ayrı ayrı büyütür,
+orijinal fps + ses izini koruyarak yeniden kodlar). Canlı test: 256×256 →
+1024×1024 (RealESRGAN_x4plus, 4x), fps ve süre birebir korundu. **RIFE kare
+interpolasyonu YOK:** `rife-ncnn-vulkan-python` PyPI'da yalnızca kaynak
+dağıtım (.tar.gz) olarak mevcut — Vulkan SDK + C++ derleyici zinciri
+gerektiriyor, bu ortamda güvenle derlenemedi.
+
+**Adım 5 (timeline UI):** `VideoPanel.tsx`'in düzenleme sekmesine gerçek bir
+video scrubber eklendi — kırpma (trim) için yüklenen kaynak videonun yerel
+blob URL'i (`URL.createObjectURL`, sunucu yüklemesi bitmeden anında
+oynatılabilir) bir `<video>` öğesinde gösterilip iki `range` slider'ı
+`currentTime`'ı canlı güncelleyerek kare-kare önizleme sağlıyor.
+
+**İndirme hızı sınırlaması (kullanıcı isteğiyle):** HF Hub'ın yeni Xet
+depolama istemcisi (`hf_xet` paketi) Python'ın `requests` oturumunu tamamen
+atlayıp kendi Rust HTTP istemcisiyle indiriyor — `configure_http_backend` ile
+kurulan bir hız sınırlayıcı session'ı görmüyor. Çözüm: `HF_HUB_DISABLE_XET=1`
+ortam değişkeniyle Xet devre dışı bırakılıp klasik `requests` tabanlı
+indirmeye düşülüyor; bir `HTTPAdapter` sarmalayıcısı (`response.raw.read`/
+`.stream`'i `time.sleep` ile geciktiren) `configure_http_backend`'e
+kaydediliyor. Canlı ölçüm: sınırsız ~11 MB/sn'den istenen 5 MB/sn'ye (ölçülen
+~3 MB/sn, güvenli tarafta) düştüğü doğrulandı. 4 model indirmesi PARALEL değil
+SIRALI çalıştırılıyor (aksi halde toplam hız istenen sınırı aşardı); hepsi
+`.incomplete` dosyalarından kaldığı yerden devam edebiliyor (indirme
+durdurulup yeniden başlatıldığında doğrulandı).

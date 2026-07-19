@@ -1,26 +1,33 @@
-"""Video adapter'ı (Faz 8): LTX-Video ile text-to-video / image-to-video.
+"""Video adapter'ı (Faz 8): kademeli T2V/I2V modelleri (plan.md adım 1).
 
 DİKKAT: Bu modül worker env'inde (envs/image ile paylaşılır — scheduler._ENV_ALIAS)
 çalışır. 3.11+ sözdizimi KULLANMA. torch/diffusers importları metod içindedir.
 
-Kademeli model desteğinden (plan.md Faz 8 adım 1: LTX-Video → Wan 2.x → CogVideoX →
-Hunyuan Video → Mochi → Pyramid Flow → SkyReels) yalnızca LTX-Video (en hafif,
-düşük VRAM, plan'ın belirttiği varsayılan) bu ilk dilimde uygulandı — kalanlar
-plan.md'de "Faz 8 kalanları" olarak not düşüldü.
+Kademeli liste (LTX-Video → Wan 2.x → CogVideoX → Hunyuan Video → Mochi →
+Pyramid Flow → SkyReels) — ilk 5'i diffusers'ın kendi pipeline sınıflarıyla
+uygulandı (`family` parametresi seçer). Pyramid Flow ve SkyReels diffusers'ın
+yerleşik pipeline'ları arasında YOK (özel/topluluk kod gerektiriyor) — bu
+dilimde uygulanmadı, plan.md'ye not düşüldü.
+
+**Diffusers pin güncellemesi:** `envs/image`'ın pini 0.32.2 → 0.33.1'e çıkarıldı
+(Wan desteği için). `--no-deps` ile kuruldu, torch/transformers'a dokunulmadı;
+SDXL/FLUX/SD3/LTX/ControlNet canlıda regresyon testinden geçti (bkz.
+docs/worker-envs.md).
 
 params:
-- model_path: Model Browser'da kayıtlı bir bileşen ağırlık dosyası (LTX-Video
-  çok-bileşenli bir diffusers pipeline'ı olduğundan — transformer/vae/
-  text_encoder alt klasörleri — hangi bileşen seçilirse seçilsin üst
-  model_index.json köküne çözülür), doğrudan bir diffusers dizini, ya da HF
-  repo id; boşsa "Lightricks/LTX-Video" varsayılanı kullanılır (ilk
-  kullanımda ~20 GB indirir)
-- mode: t2v (vars.) | i2v
+- family: ltx (vars.) | wan | cogvideox | hunyuan | mochi
+- model_path: Model Browser'da kayıtlı bir bileşen ağırlık dosyası (çok
+  bileşenli bir diffusers pipeline'ı olduğundan hangi bileşen seçilirse
+  seçilsin model_index.json köküne çözülür) ya da HF repo id; boşsa ailenin
+  varsayılan repo'su kullanılır (ilk kullanımda büyük indirme yapabilir —
+  bkz. docs/worker-envs.md boyut tablosu)
+- mode: t2v (vars.) | i2v (yalnızca ltx/wan/cogvideox'ta var)
 - init_image: kaynak görsel yolu (i2v için zorunlu)
-- prompt / negative_prompt · width (vars. 704) · height (vars. 480) ·
-  num_frames (vars. 121, 8'in katı+1) · fps (vars. 25) · steps (vars. 30) ·
-  cfg (vars. 3.0) · seed · output_path (.mp4)
-- vram_mode: max (vars.) | balanced (model offload) | low (sequential+tiling)
+- prompt / negative_prompt (hunyuan hariç tüm ailelerde) · width/height ·
+  num_frames · fps (yalnızca encode'a etki eder; ltx'te ayrıca generation'a da
+  frame_rate olarak geçer) · steps · cfg · seed · output_path (.mp4)
+- vram_mode: max (vars.) | balanced (model offload) | low (sequential+tiling) —
+  wan/hunyuan/mochi 32 GB'lık bir GPU'da genellikle balanced/low ister
 """
 
 from __future__ import annotations
@@ -34,20 +41,70 @@ from typing import Any
 
 from studio_inference.adapters._ffmpeg import ensure_ffmpeg_on_path
 
+# aile -> (t2v pipeline sınıfı, i2v pipeline sınıfı ya da None, vars. t2v repo,
+#          vars. i2v repo, negative_prompt destekleniyor mu, LTX'in frame_rate'i)
+_FAMILIES: dict[str, dict[str, Any]] = {
+    "ltx": {
+        "t2v_cls": "LTXPipeline",
+        "i2v_cls": "LTXImageToVideoPipeline",
+        "repo": "Lightricks/LTX-Video",
+        "repo_i2v": "Lightricks/LTX-Video",
+        "negative_prompt": True,
+        "frame_rate_param": True,
+        "defaults": {"width": 704, "height": 480, "num_frames": 121, "steps": 30, "cfg": 3.0},
+    },
+    "wan": {
+        "t2v_cls": "WanPipeline",
+        "i2v_cls": "WanImageToVideoPipeline",
+        "repo": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        "repo_i2v": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        "negative_prompt": True,
+        "frame_rate_param": False,
+        "defaults": {"width": 832, "height": 480, "num_frames": 81, "steps": 50, "cfg": 5.0},
+    },
+    "cogvideox": {
+        "t2v_cls": "CogVideoXPipeline",
+        "i2v_cls": "CogVideoXImageToVideoPipeline",
+        "repo": "THUDM/CogVideoX-2b",
+        "repo_i2v": "THUDM/CogVideoX-5b-I2V",
+        "negative_prompt": True,
+        "frame_rate_param": False,
+        "defaults": {"width": 720, "height": 480, "num_frames": 49, "steps": 50, "cfg": 6.0},
+    },
+    "hunyuan": {
+        "t2v_cls": "HunyuanVideoPipeline",
+        "i2v_cls": None,
+        "repo": "hunyuanvideo-community/HunyuanVideo",
+        "repo_i2v": "",
+        "negative_prompt": False,
+        "frame_rate_param": False,
+        "defaults": {"width": 960, "height": 544, "num_frames": 65, "steps": 30, "cfg": 6.0},
+    },
+    "mochi": {
+        "t2v_cls": "MochiPipeline",
+        "i2v_cls": None,
+        "repo": "genmo/mochi-1-preview",
+        "repo_i2v": "",
+        "negative_prompt": True,
+        "frame_rate_param": False,
+        "defaults": {"width": 848, "height": 480, "num_frames": 19, "steps": 64, "cfg": 4.5},
+    },
+}
+
 
 def _resolve_pipeline_root(path_or_repo: str) -> str:
     """Model Browser'da LTX-Video gibi çok-bileşenli bir diffusers pipeline'ının
     HERHANGİ bir bileşen ağırlık dosyası seçilmiş olabilir (ör. .../transformer/
     diffusion_pytorch_model-00001-of-00002.safetensors) — from_pretrained ise
-    model_index.json'ın olduğu ÜST kökü ister. En fazla 3 üst klasöre kadar
-    model_index.json aranır; bulunamazsa tek-bileşenli desene (config.json
-    kardeşi — ör. ControlNet) düşer, o da yoksa yol/HF repo id olduğu gibi
-    kullanılır."""
+    model_index.json'ın olduğu ÜST kökü ister. En fazla 4 üst klasöre kadar
+    model_index.json aranır (Mochi/Hunyuan gibi derin yapılar için); bulunamazsa
+    tek-bileşenli desene (config.json kardeşi — ör. ControlNet) düşer, o da
+    yoksa yol/HF repo id olduğu gibi kullanılır."""
     p = str(path_or_repo)
     if not os.path.isfile(p):
         return p
     d = os.path.dirname(p)
-    for _ in range(3):
+    for _ in range(4):
         if not d or not os.path.isdir(d):
             break
         if os.path.exists(os.path.join(d, "model_index.json")):
@@ -63,7 +120,8 @@ def _resolve_pipeline_root(path_or_repo: str) -> str:
 
 
 def _align_frames(value: Any, lo: int = 9, hi: int = 257) -> int:
-    """LTX kare sayısı 8k+1 biçiminde olmalı (VAE zamansal downsample oranı)."""
+    """Çoğu video VAE'si kare sayısının 8k+1 biçiminde olmasını ister (zamansal
+    downsample oranı) — LTX/Wan/CogVideoX/Mochi hepsi bu kalıba uyar."""
     v = max(lo, min(hi, int(value)))
     k = round((v - 1) / 8)
     return max(lo, 8 * k + 1)
@@ -74,30 +132,85 @@ def _align(value: Any, multiple: int = 32, lo: int = 256, hi: int = 1280) -> int
     return max(lo, (v // multiple) * multiple)
 
 
+# Aile başına ölçülen/tahmini adım hızı (adım/sn, varsayılan çözünürlükte) — Faz 8
+# canlı ölçümlerinden (RTX 5090); tahmini süre göstergesi için kullanılır.
+_STEPS_PER_SEC = {"ltx": 13.0, "wan": 2.0, "cogvideox": 4.0, "hunyuan": 0.5, "mochi": 1.0}
+
+
+def estimate_seconds(family: str, steps: int) -> float:
+    rate = _STEPS_PER_SEC.get(family, 2.0)
+    return round(steps / rate, 1)
+
+
+def recommend_settings(
+    family: str, width: int, height: int, num_frames: int, vram_mode: str
+) -> tuple[int, int, int, str]:
+    """plan.md adım 3 — VRAM'e göre otomatik çözünürlük/frame önerisi: algılanan
+    toplam VRAM, ailenin varsayılan ayarlardaki kaba tahmininin altındaysa
+    çözünürlük/kare sayısı orantılı küçültülür ve vram_mode en az 'balanced'a
+    yükseltilir. 32 GB+ GPU'larda (bu makine gibi) devreye girmez."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return width, height, num_frames, vram_mode
+        total_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+    except Exception:
+        return width, height, num_frames, vram_mode
+
+    spec = _FAMILIES.get(family)
+    if spec is None:
+        return width, height, num_frames, vram_mode
+    budget_mb = total_mb * 0.85  # sürücü/diğer süreçler için pay
+    estimate_by_family = {
+        "ltx": 14_000, "wan": 16_000, "cogvideox": 12_000, "hunyuan": 28_000, "mochi": 24_000,
+    }
+    estimate_mb = estimate_by_family.get(family, 14_000)
+    if budget_mb >= estimate_mb:
+        return width, height, num_frames, vram_mode
+
+    scale = max(0.5, (budget_mb / estimate_mb) ** 0.5)  # VRAM ~ çözünürlük^2 kabaca
+    new_width = _align(width * scale)
+    new_height = _align(height * scale)
+    new_frames = _align_frames(num_frames * scale)
+    new_vram_mode = vram_mode if vram_mode == "low" else "balanced"
+    return new_width, new_height, new_frames, new_vram_mode
+
+
 class VideoAdapter:
     def __init__(self) -> None:
         self._pipe = None
+        self._family = ""
         self._model_path = ""
         self._vram_mode = "max"
 
-    def load(self, model_path: str, vram_mode: str = "max", **kwargs: Any) -> None:
+    def load(
+        self, model_path: str, family: str = "ltx", vram_mode: str = "max", **kwargs: Any
+    ) -> None:
+        spec = _FAMILIES.get(family)
+        if spec is None:
+            raise RuntimeError(f"bilinmeyen family: {family!r} ({', '.join(_FAMILIES)})")
         try:
+            import diffusers
             import torch
-            from diffusers import LTXPipeline
         except ImportError as exc:
             raise RuntimeError(
                 "video worker ortamı eksik (torch/diffusers bulunamadı). "
                 "Kurulum reçetesi: docs/worker-envs.md  |  " + str(exc)
             ) from exc
 
+        cls = getattr(diffusers, spec["t2v_cls"])
         use_cuda = torch.cuda.is_available()
         dtype = torch.bfloat16 if use_cuda else torch.float32
-        repo = _resolve_pipeline_root(model_path) if model_path else "Lightricks/LTX-Video"
-        pipe = LTXPipeline.from_pretrained(repo, torch_dtype=dtype)
+        repo = _resolve_pipeline_root(model_path) if model_path else spec["repo"]
+        pipe = cls.from_pretrained(repo, torch_dtype=dtype)
 
         if use_cuda:
             if vram_mode == "low":
-                pipe.vae.enable_tiling()
+                try:
+                    pipe.vae.enable_tiling()
+                except Exception:
+                    pass
                 pipe.enable_sequential_cpu_offload()
             elif vram_mode == "balanced":
                 pipe.enable_model_cpu_offload()
@@ -105,6 +218,7 @@ class VideoAdapter:
                 pipe.to("cuda")
 
         self._pipe = pipe
+        self._family = family
         self._model_path = str(model_path)
         self._vram_mode = vram_mode
 
@@ -112,37 +226,52 @@ class VideoAdapter:
         output_path = params.get("output_path", "")
         if not output_path:
             raise RuntimeError("output_path gerekli")
+        family = str(params.get("family", "ltx") or "ltx")
+        spec = _FAMILIES.get(family)
+        if spec is None:
+            raise RuntimeError(f"bilinmeyen family: {family!r} ({', '.join(_FAMILIES)})")
         mode = str(params.get("mode", "t2v") or "t2v")
         if mode not in ("t2v", "i2v"):
             raise RuntimeError(f"bilinmeyen mode: {mode!r} (t2v|i2v)")
+        if mode == "i2v" and spec["i2v_cls"] is None:
+            raise RuntimeError(f"{family} bu dilimde yalnızca t2v destekliyor (i2v yok)")
         vram_mode = str(params.get("vram_mode", "max") or "max")
         if vram_mode not in ("max", "balanced", "low"):
             raise RuntimeError(f"bilinmeyen vram_mode: {vram_mode!r} (max|balanced|low)")
 
-        model_path = str(params.get("model_path", "") or "Lightricks/LTX-Video")
-        # Kalıcı worker: model komutlar arasında bellekte kalır; yol/VRAM modu değişirse takas.
+        d = spec["defaults"]
+        width = _align(params.get("width", d["width"]))
+        height = _align(params.get("height", d["height"]))
+        num_frames = _align_frames(params.get("num_frames", d["num_frames"]))
+        if bool(params.get("auto_resolution", True)):
+            width, height, num_frames, vram_mode = recommend_settings(
+                family, width, height, num_frames, vram_mode
+            )
+
+        model_path = str(params.get("model_path", "") or spec["repo"])
+        # Kalıcı worker: model komutlar arasında bellekte kalır; aile/yol/VRAM modu
+        # değişirse takas.
         if self._pipe is not None and (
-            self._model_path != model_path or self._vram_mode != vram_mode
+            self._family != family or self._model_path != model_path or self._vram_mode != vram_mode
         ):
             self.unload()
         if self._pipe is None:
+            eta = estimate_seconds(family, int(params.get("steps", d["steps"])))
             yield {
                 "event": "progress",
                 "value": 0.0,
-                "message": "model yükleniyor… (ilk kullanımda ~13 GB indirebilir)",
+                "message": f"{family} modeli yükleniyor… (ilk kullanımda büyük indirme olabilir, "
+                f"tahmini üretim süresi ~{eta:.0f}sn)",
             }
-            self.load(model_path, vram_mode=vram_mode)
+            self.load(model_path, family=family, vram_mode=vram_mode)
 
         import torch
 
         ensure_ffmpeg_on_path()
 
-        width = _align(params.get("width", 704))
-        height = _align(params.get("height", 480))
-        num_frames = _align_frames(params.get("num_frames", 121))
-        fps = int(params.get("fps", 25))
-        steps = int(params.get("steps", 30))
-        cfg = float(params.get("cfg", 3.0))
+        fps = int(params.get("fps", 24))
+        steps = int(params.get("steps", d["steps"]))
+        cfg = float(params.get("cfg", d["cfg"]))
         seed = int(params.get("seed", -1))
         if seed < 0:
             seed = random.randrange(2**31)
@@ -151,38 +280,51 @@ class VideoAdapter:
 
         call: dict[str, Any] = {
             "prompt": params.get("prompt", ""),
-            "negative_prompt": params.get("negative_prompt", "") or None,
             "width": width,
             "height": height,
             "num_frames": num_frames,
-            "frame_rate": fps,
             "num_inference_steps": steps,
             "guidance_scale": cfg,
             "generator": generator,
+            "output_type": "pil",
         }
+        if spec["negative_prompt"]:
+            call["negative_prompt"] = params.get("negative_prompt", "") or None
+        if spec["frame_rate_param"]:
+            call["frame_rate"] = fps
+
         if mode == "i2v":
-            from diffusers import LTXImageToVideoPipeline
+            import diffusers
             from PIL import Image
 
             init_path = str(params.get("init_image", ""))
             if not init_path:
                 raise RuntimeError("i2v için init_image gerekli")
             call["image"] = Image.open(init_path).convert("RGB").resize((width, height))
-            work = LTXImageToVideoPipeline.from_pipe(self._pipe)
+            i2v_cls = getattr(diffusers, spec["i2v_cls"])
+            work = i2v_cls.from_pipe(self._pipe)
         else:
             work = self._pipe
 
         events: queue.Queue = queue.Queue()
         outcome: dict = {}
+        want_preview = bool(params.get("preview", True))
+        # ~6 önizleme/üretim, çok sık pahalı VAE decode'a girmesin
+        preview_every = max(1, steps // 6)
 
         def on_step(pipe_obj: Any, step: int, timestep: Any, cb_kwargs: dict) -> dict:
-            events.put(
-                {
-                    "event": "progress",
-                    "value": (step + 1) / max(1, steps),
-                    "message": f"adım {step + 1}/{steps}",
-                }
-            )
+            ev: dict[str, Any] = {
+                "event": "progress",
+                "value": (step + 1) / max(1, steps),
+                "message": f"adım {step + 1}/{steps}",
+            }
+            if want_preview and (step % preview_every == 0 or step + 1 == steps):
+                b64 = _latent_preview_jpeg(
+                    pipe_obj, cb_kwargs.get("latents"), family, num_frames, width, height
+                )
+                if b64:
+                    ev["preview"] = b64
+            events.put(ev)
             return cb_kwargs
 
         call["callback_on_step_end"] = on_step
@@ -194,6 +336,7 @@ class VideoAdapter:
                 _encode_mp4(frames, output_path, fps)
                 outcome["result"] = {
                     "path": output_path,
+                    "family": family,
                     "seed": seed,
                     "width": width,
                     "height": height,
@@ -223,6 +366,7 @@ class VideoAdapter:
         if self._pipe is not None:
             del self._pipe
             self._pipe = None
+            self._family = ""
             self._model_path = ""
             try:
                 import torch
@@ -233,8 +377,79 @@ class VideoAdapter:
                 pass
 
     def vram_estimate(self, params: dict) -> int:
-        # LTX-Video bf16 (transformer + T5-XXL metin kodlayıcı) — Faz 14'te profillenecek
-        return 14_000
+        # Kaba tahminler (bf16 transformer + T5/UMT5 metin kodlayıcı) — Faz 14'te profillenecek
+        return {
+            "ltx": 14_000,
+            "wan": 16_000,
+            "cogvideox": 12_000,
+            "hunyuan": 28_000,
+            "mochi": 24_000,
+        }.get(str(params.get("family", "ltx")), 14_000)
+
+
+def _latent_preview_jpeg(
+    pipe_obj: Any, latents: Any, family: str, num_frames: int, width: int, height: int
+) -> str | None:
+    """plan.md adım 2 — ara kare önizlemesi: mevcut latent'in İLK karesini
+    pipeline'ın kendi VAE'siyle gerçekten decode edip küçük bir JPEG'e çevirir.
+    5 aile de farklı bir video VAE/latent düzeni kullanıyor:
+    - LTX transformer'ı latentleri düzleştirip (patchify) [B, S, D] dizisine
+      paketler — VAE'ye vermeden önce pipeline'ın kendi `_unpack_latents` +
+      `_denormalize_latents` yardımcılarıyla [B, C, F, H, W]'ye geri çevrilmesi
+      GEREKİR (canlı testte yakalandı: aksi halde `ValueError: not enough
+      values to unpack`).
+    - Wan/CogVideoX/Hunyuan/Mochi latentleri zaten 5D [B, C, F, H, W] tutar
+      (DiT tarzı transformer, ayrı bir paketleme yok) — bunlarda doğrudan
+      VAE decode denenir.
+    Bu decode ucuz değildir (SDXL'in doğrusal yaklaşımının aksine) — bu yüzden
+    yalnızca birkaç adımda bir çağrılır (bkz. infer()'daki preview_every).
+    Herhangi bir aile/şekil uyuşmazlığında sessizce None döner — önizleme asla
+    üretimi düşürmesin."""
+    try:
+        import torch
+
+        if latents is None:
+            return None
+        vae = pipe_obj.vae
+        with torch.no_grad():
+            lat = latents
+            if family == "ltx" and lat.ndim == 3:
+                lf = (num_frames - 1) // pipe_obj.vae_temporal_compression_ratio + 1
+                lh = height // pipe_obj.vae_spatial_compression_ratio
+                lw = width // pipe_obj.vae_spatial_compression_ratio
+                lat = type(pipe_obj)._unpack_latents(
+                    lat, lf, lh, lw,
+                    pipe_obj.transformer_spatial_patch_size,
+                    pipe_obj.transformer_temporal_patch_size,
+                )
+                lat = type(pipe_obj)._denormalize_latents(
+                    lat, vae.latents_mean, vae.latents_std, vae.config.scaling_factor
+                )
+                lat = lat[:, :, :1]  # yalnızca ilk kare
+            elif lat.ndim == 5:  # [B, C, T, H, W] — yalnızca ilk kareyi al
+                scaling = getattr(vae.config, "scaling_factor", 1.0) or 1.0
+                lat = lat[:, :, :1] / scaling
+            else:
+                return None
+            decoded = vae.decode(lat.to(vae.dtype)).sample
+            if decoded.ndim == 5:
+                decoded = decoded[:, :, 0]
+            frame = decoded[0]
+
+        import base64
+        import io
+
+        from PIL import Image
+
+        arr = ((frame.float() + 1.0) / 2.0).clamp(0, 1).mul(255).byte()
+        arr = arr.permute(1, 2, 0).cpu().numpy()
+        img = Image.fromarray(arr)
+        img.thumbnail((192, 192))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=65)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
 
 
 def _encode_mp4(frames: list, output_path: str, fps: int) -> None:

@@ -110,11 +110,17 @@ def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
         settings.ensure_dirs()
         ext = str(params.get("format", "mp4") or "mp4")
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+    # Faz 8 adım 2 — uzun iş yönetimi: video üretimi dakikalar sürebilir; istemci
+    # açıkça bir öncelik belirtmediyse (vars. 0) hızlı iş türlerinin (görüntü/ses)
+    # kuyrukta önüne geçmemesi için düşük öncelik sınıfına düşürülür.
+    priority = req.priority
+    if kind in ("video", "videotool") and priority == 0:
+        priority = -1
     with session_scope() as session:
         job = Job(
             kind=kind,
             params=params,
-            priority=req.priority,
+            priority=priority,
             project_id=req.project_id,
             status=JobStatus.QUEUED,
         )
