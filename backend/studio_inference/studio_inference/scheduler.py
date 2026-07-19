@@ -40,7 +40,7 @@ def _now() -> datetime:
 # Bazı iş türleri ayrı bir venv gerektirmeyecek kadar hafif ek bağımlılık ister
 # (Faz 5 görüntü araçları: torch/transformers zaten "image" venv'inde) — kendi
 # venv'i doğurmak yerine mevcut olanı paylaşır (docs/worker-envs.md).
-_ENV_ALIAS: dict[str, str] = {"imgtool": "image"}
+_ENV_ALIAS: dict[str, str] = {"imgtool": "image", "video": "image", "videotool": "image"}
 
 
 def worker_python(kind: str) -> str:

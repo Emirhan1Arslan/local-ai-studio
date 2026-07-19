@@ -17,6 +17,7 @@ import QueuePanel from "./panels/QueuePanel";
 import SettingsPanel from "./panels/SettingsPanel";
 import SystemPanel from "./panels/SystemPanel";
 import ToolsPanel from "./panels/ToolsPanel";
+import VideoPanel from "./panels/VideoPanel";
 import VramPanel from "./panels/VramPanel";
 import { useStudio } from "./state";
 
@@ -35,6 +36,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   tools: ToolsPanel,
   chat: ChatPanel,
   audio: AudioPanel,
+  video: VideoPanel,
 };
 
 const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
@@ -42,6 +44,7 @@ const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "tools", title: "Araçlar", near: "generate" },
   { id: "chat", title: "Sohbet", near: "generate" },
   { id: "audio", title: "Ses", near: "chat" },
+  { id: "video", title: "Video", near: "audio" },
   { id: "downloads", title: "İndirmeler", near: "models" },
   { id: "explore", title: "Keşfet", near: "downloads" },
   { id: "queue", title: "Kuyruk", near: "models" },

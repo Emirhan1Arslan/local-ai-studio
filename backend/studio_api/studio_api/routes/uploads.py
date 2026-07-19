@@ -1,9 +1,12 @@
 """Yükleme ucu (Faz 4): img2img/inpaint/controlnet için kaynak görsel + maske.
 Faz 7'de ses dosyaları (mikrofon kaydı / dosya transkripsiyonu) için genişletildi.
+Faz 8'de video dosyaları (dışarıdan getirilen klip → videotool düzenleme) için genişletildi.
 
-Tarayıcı UI'ı yerel dosya yoluna erişemez; görseli/sesi base64 ile buraya yükler,
-dönen yol iş parametrelerinde (init_image / mask_image / controlnet image /
-audio_path) kullanılır. Dosyalar ~/LocalAIStudio/uploads altına yazılır.
+Tarayıcı UI'ı yerel dosya yoluna erişemez; görseli/sesi/videoyu base64 ile buraya
+yükler, dönen yol iş parametrelerinde (init_image / mask_image / controlnet image /
+audio_path / video_path) kullanılır. Dosyalar ~/LocalAIStudio/uploads altına yazılır.
+Uygulamanın kendi ürettiği video/ses (outputs/ altında) zaten yerel yol olduğu için
+bu uçtan geçmez — yalnızca dışarıdan getirilen kaynaklar için gerekli.
 """
 
 from __future__ import annotations
@@ -30,8 +33,12 @@ _ALLOWED_EXT = {
     ".flac",
     ".ogg",
     ".webm",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
 }
-_MAX_BYTES = 100 * 1024 * 1024
+_MAX_BYTES = 300 * 1024 * 1024
 
 
 class UploadRequest(BaseModel):

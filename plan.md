@@ -365,6 +365,43 @@ görünür/yönetilebilir hale geldi.
 
 **DoD:** 5 sn 720p klip LTX ile üretilir, iptal/duraklat çalışır ve VRAM geri döner; ffmpeg zinciri (kes+birleştir+ses) UI'dan kurulup çalışır.
 
+**Durum (2026-07-19):** Adım 1 (yalnız LTX-Video — plan'ın belirttiği
+varsayılan/en hafif model; Wan 2.x/CogVideoX/Hunyuan/Mochi/Pyramid
+Flow/SkyReels ertelendi), 4 (kes/birleştir/hız/ses ekleme/format dönüştürme
+MP4/MOV/AVI/GIF — RIFE ve video upscale zaten plan'da "opsiyonel" işaretli,
+ertelendi), 5'in çekirdeği (Video paneli: üretim + düzenleme + sonuç
+galerisi; basit timeline/kare-kare önizleme yerine oynatıcı — ertelendi)
+tamamlandı ve RTX 5090'da canlı doğrulandı. İptal/duraklat zaten scheduler'ın
+genel süreç-kill mekanizmasından (adapter'a özgü kod gerekmeden) ücretsiz
+çalışıyor. **Ertelenen kalanlar:**
+- Adım 1 kalan: Wan 2.x, CogVideoX, Hunyuan Video, Mochi, Pyramid Flow,
+  SkyReels (kademeli listenin geri kalanı)
+- Adım 2: uzun iş yönetimi (düşük öncelik sınıfı, tahmini süre, ara kare
+  önizlemesi, checkpoint/sürdürme) — LTX zaten çok hızlı (30 adım/3.3sn)
+  olduğu için şimdilik gerekmedi, ağır modeller eklenince gerekli olacak
+- Adım 3: gelişmiş bellek stratejileri (fp8, otomatik çözünürlük önerisi) —
+  temel offload modları (balanced/low, SDXL'deki desenle aynı) var ama LTX
+  RTX 5090'da 32GB'ın yarısından azını kullandığı için ayrıntılı ayar
+  gerekmedi
+- Adım 4 kalan: RIFE kare interpolasyonu, video upscale
+- Adım 5 kalan: gerçek timeline/kare-kare önizleme (şimdilik standart video
+  oynatıcı yeterli)
+- **Video modelleri Model Manager entegrasyonu:** ses modelleri için yapılan
+  entegrasyonun (bkz. yukarı) aksine, LTX-Video çok-bileşenli bir diffusers
+  dizini (transformer/vae/text_encoder alt klasörleri, her biri kendi
+  ağırlık parçalarıyla) — tarayıcı bunu tek bir "model" olarak değil birden
+  çok parça olarak listeler. Bu farklı entegrasyon deseni bilinçli olarak bu
+  fazın sonuna bırakıldı; şimdilik model_path boşsa HF repo id'sinden
+  (`Lightricks/LTX-Video`) doğrudan self-download çalışıyor.
+
+Kurulum notu: LTX-Video, `envs/image`'ın zaten sahip olduğu diffusers
+0.32.2'de hazır çıktı (`LTXPipeline`/`LTXImageToVideoPipeline`) — ayrı bir
+video env'i gerekmedi, yalnızca eksik bir bağımlılık (`sentencepiece`,
+T5 tokenizer için) kuruldu. Video encode kendi FFmpeg subprocess çözümüyle
+yapılıyor (Faz 7'nin FFmpeg build'i paylaşılıyor) — `imageio-ffmpeg` gibi ek
+bir paket gerekmedi. Tam bağımlılık zinciri ve canlı doğrulama sayıları
+docs/worker-envs.md'de.
+
 ---
 
 ### FAZ 9 — 3D Üretim (4–6 hafta)

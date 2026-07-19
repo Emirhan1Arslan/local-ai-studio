@@ -209,6 +209,18 @@ export async function uploadAudioFile(file: File | Blob, filename = "kayit.webm"
   return postUpload(name, dataUrl.split(",", 2)[1] ?? "");
 }
 
+/** Dışarıdan getirilen video dosyası yükleme (videotool düzenleme için) — uygulamanın
+ * kendi ürettiği videolar zaten yerel yol olduğu için bu uçtan geçmez. */
+export async function uploadVideoFile(file: File): Promise<UploadOut> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  return postUpload(file.name, dataUrl.split(",", 2)[1] ?? "");
+}
+
 export async function regenerateAsset(id: string): Promise<{ job_id: string }> {
   const r = await req(`/v1/assets/${id}/regenerate`, { method: "POST" });
   if (!r.ok) throw new Error(`regenerate ${r.status}`);

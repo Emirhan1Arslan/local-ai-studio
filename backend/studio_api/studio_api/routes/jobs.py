@@ -101,6 +101,15 @@ def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
         settings.ensure_dirs()
         ext = "wav" if params.get("op") == "tts" else "json"
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+    elif kind == "video" and not params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.mp4")
+    elif kind == "videotool" and not params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        ext = str(params.get("format", "mp4") or "mp4")
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
     with session_scope() as session:
         job = Job(
             kind=kind,

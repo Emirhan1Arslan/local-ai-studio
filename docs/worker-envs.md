@@ -272,3 +272,53 @@ algılayıp DB'ye kaydetti — ayrı bir rescan adımı gerekmedi. Doğrulama:
 `HF_HUB_OFFLINE=1` + boş `HF_HOME` ile üçü de (Kokoro TTS, XTTS-v2 TTS,
 faster-whisper STT) `model_path` üzerinden hiçbir ağ isteği yapmadan başarıyla
 çalıştı — gerçek "tamamen yerel" yükleme kanıtlandı.
+
+## Faz 8 — video env (envs/image ile PAYLAŞILIR)
+
+`video`/`videotool` iş türleri kendi venv'ini doğurmaz; `scheduler._ENV_ALIAS`
+onları `envs/image`'e yönlendirir. Neden: LTX-Video (plan.md'nin kademeli video
+model listesindeki ilk/varsayılan, en hafif model) diffusers 0.32.2 içinde
+zaten `LTXPipeline`/`LTXImageToVideoPipeline` olarak hazır — ayrı bir izole env
+kurmaya gerek kalmadı.
+
+```bash
+# Tek eksik: T5 tokenizer'ın ihtiyaç duyduğu sentencepiece (saf wheel, torch'a dokunmaz)
+uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe sentencepiece
+```
+
+**Neden gerekiyor:** `LTXPipeline.from_pretrained(...)` T5Tokenizer'ı yüklemeye
+çalışırken `ImportError: T5Tokenizer requires the SentencePiece library`
+fırlattı — `transformers`'ın `dummy_sentencepiece_objects` şablonu devreye
+girdi. `sentencepiece` kendi başına duran (bağımlılıksız) bir C++ wheel'i,
+`--no-deps` gerek kalmadan güvenle kuruldu (canlıda doğrulandı: kurulumdan
+sonra `torch.__file__` hâlâ sistem yolunu gösteriyor).
+
+**Video encode — kendi FFmpeg çözümü, ek bağımlılık yok:** diffusers'ın
+`export_to_video()` yardımcısı `imageio-ffmpeg` paketini istiyor (denendi,
+eksik olduğu canlıda doğrulandı: `AttributeError: ... imageio backend`).
+Bunun yerine `adapters/video.py::_encode_mp4()` kareleri geçici bir klasöre
+PNG olarak yazıp Faz 7'de kurulan FFmpeg build'iyle (`adapters/_ffmpeg.py`,
+artık audio/video/videotool arasında paylaşılan ortak modül) doğrudan H.264
+MP4'e kodluyor — yeni bir Python paketi gerekmedi.
+
+**Canlı doğrulama (RTX 5090, `Lightricks/LTX-Video`, ~20 GB/18 dosya, ilk
+indirmede tek seferlik):**
+- Model yükleme: 43.7 sn (soğuk, diskten okuma) · VRAM sonrası: 14.2 GB
+- Üretim: 41 kare, 30 adım, 512×320 → **3.3 sn** (LTX gerçekten hafif — RTX
+  5090'da bellek stratejisi/offload gerekmeden rahat çalışıyor) · VRAM tepe:
+  14.95 GB (32 GB'nin yarısından az — plan.md'nin "en VRAM-yoğun faz" uyarısı
+  LTX için değil, kademeli listenin sonundaki ağır modeller için geçerli).
+- FFmpeg encode ile üretilen MP4 doğrulandı: h264, 512×320, 25 fps, 1.64 sn
+  (41/25 ile birebir eşleşti).
+- i2v (image-to-video) da aynı şekilde canlı doğrulandı (55.8 sn, model zaten
+  bellekteyken ~ilk yüklemeyle aynı — kalıcı worker deseni sayesinde sonraki
+  işler çok daha hızlı olacak).
+
+**videotool bulgusu (canlı testte yakalandı, düzeltildi):** LTX-Video çıktısı
+ses izi taşımıyor. `speed`/`add_audio` op'larının FFmpeg filtre grafikleri
+başlangıçta koşulsuz `[0:a]` (ses akışı) referansı içeriyordu — ses izsiz bir
+video verildiğinde `Stream specifier ':a' ... matches no streams` ile
+patlıyordu. Çözüm: `adapters/_ffmpeg.py::has_audio_stream()` (ffprobe ile
+yoklama) eklendi, her iki op da ses izi yoksa yalnız-video bir filtre
+grafiğine düşüyor. `trim`/`concat`/`convert` (gif dahil) op'ları da canlıda
+doğrulandı.

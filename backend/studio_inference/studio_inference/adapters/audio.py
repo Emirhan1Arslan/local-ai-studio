@@ -55,8 +55,9 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
+
+from studio_inference.adapters._ffmpeg import ensure_ffmpeg_on_path as _ensure_ffmpeg_on_path
 
 
 def _import_error(hint: str, exc: ImportError) -> RuntimeError:
@@ -64,18 +65,6 @@ def _import_error(hint: str, exc: ImportError) -> RuntimeError:
         f"audio worker ortamı eksik ({hint}). "
         "Kurulum reçetesi: docs/worker-envs.md  |  " + str(exc)
     )
-
-
-def _ensure_ffmpeg_on_path() -> None:
-    """torchcodec'in (XTTS-v2/torch>=2.9 için) aradığı FFmpeg paylaşımlı
-    DLL'lerini bulabilmesi için elle indirilen build'i gerçek PATH'e ekler."""
-    data_dir = Path(os.environ.get("STUDIO_DATA_DIR") or (Path.home() / "LocalAIStudio"))
-    ffmpeg_bin = data_dir / "tools" / "ffmpeg" / "bin"
-    if not ffmpeg_bin.is_dir():
-        return
-    path = os.environ.get("PATH", "")
-    if str(ffmpeg_bin) not in path:
-        os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + path
 
 
 def _fmt_ts_srt(seconds: float) -> str:

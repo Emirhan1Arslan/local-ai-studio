@@ -74,6 +74,15 @@ async def regenerate(asset_id: str) -> RegenerateOut:
                 settings.ensure_dirs()
                 ext = "wav" if params.get("op") == "tts" else "json"
                 params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+            elif kind == "video":
+                settings = get_settings()
+                settings.ensure_dirs()
+                params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.mp4")
+            elif kind == "videotool":
+                settings = get_settings()
+                settings.ensure_dirs()
+                ext = str(params.get("format", "mp4") or "mp4")
+                params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
             job = Job(
                 kind=kind,
                 params=params,
