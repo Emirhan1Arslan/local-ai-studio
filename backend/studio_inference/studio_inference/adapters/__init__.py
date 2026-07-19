@@ -13,6 +13,7 @@ from studio_inference.adapters.base import EngineAdapter
 _REGISTRY: dict[str, str] = {
     "dummy": "studio_inference.adapters.dummy:DummyAdapter",
     "image": "studio_inference.adapters.sdxl:SdxlAdapter",
+    "imgtool": "studio_inference.adapters.imgtool:ImgToolAdapter",
 }
 
 

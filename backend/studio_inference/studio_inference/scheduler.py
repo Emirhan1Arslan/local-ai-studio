@@ -37,18 +37,26 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# Bazı iş türleri ayrı bir venv gerektirmeyecek kadar hafif ek bağımlılık ister
+# (Faz 5 görüntü araçları: torch/transformers zaten "image" venv'inde) — kendi
+# venv'i doğurmak yerine mevcut olanı paylaşır (docs/worker-envs.md).
+_ENV_ALIAS: dict[str, str] = {"imgtool": "image"}
+
+
 def worker_python(kind: str) -> str:
     """İş türüne göre worker yorumlayıcısı (ADR-0005 izole env stratejisi).
 
-    Sıra: STUDIO_WORKER_PYTHONS override → ~/LocalAIStudio/envs/<kind> venv'i →
-    ana venv (sys.executable). Mevcut sistem ortamlarına asla dokunulmaz.
+    Sıra: STUDIO_WORKER_PYTHONS override → ~/LocalAIStudio/envs/<env_kind> venv'i
+    (_ENV_ALIAS ile başka bir türün venv'ini paylaşabilir) → ana venv (sys.executable).
+    Mevcut sistem ortamlarına asla dokunulmaz.
     """
     settings = get_settings()
     override = settings.worker_pythons.get(kind, "")
     if override:
         return override
+    env_kind = _ENV_ALIAS.get(kind, kind)
     sub = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-    candidate = settings.envs_dir / kind / sub
+    candidate = settings.envs_dir / env_kind / sub
     if candidate.exists():
         return str(candidate)
     return sys.executable
@@ -214,6 +222,10 @@ class Scheduler:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=child_env,
+            # Varsayılan 64 KiB satır tamponu, bir kütüphane stdout'a \r'li ilerleme
+            # yazarsa (newline'sız uzun satır) "Separator is not found" ile patlar
+            # (canlıda EasyOCR'ın ilk indirmesinde yakalandı) — savunma amaçlı büyütüldü.
+            limit=4 * 1024 * 1024,
         )
         handle = _WorkerHandle(kind, proc)
         handle.last_used = asyncio.get_running_loop().time()

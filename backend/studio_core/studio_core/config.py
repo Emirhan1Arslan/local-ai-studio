@@ -24,6 +24,12 @@ MODEL_SUBDIRS = [
     "controlnet",
     "checkpoints",
     "vae",
+    # Faz 5: görüntü araç seti — her araç kendi model kategorisinde listelenir
+    "background_removal",
+    "upscale",
+    "captioning",
+    "segmentation",
+    "face_restoration",
 ]
 
 

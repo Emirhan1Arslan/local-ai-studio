@@ -42,6 +42,11 @@ _KIND_BY_SUBDIR = {
     "controlnet": "controlnet",
     "checkpoints": "checkpoint",
     "vae": "vae",
+    "background_removal": "background_removal",
+    "upscale": "upscale",
+    "captioning": "captioning",
+    "segmentation": "segmentation",
+    "face_restoration": "face_restoration",
 }
 
 

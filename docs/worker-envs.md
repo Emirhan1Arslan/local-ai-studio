@@ -46,3 +46,26 @@ uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe opencv-pyt
   (ör. `diffusers/controlnet-canny-sdxl-1.0` — ilk kullanımda ~2.5 GB indirir).
 - FLUX/SD3 tek dosya checkpoint'leri text encoder'ları HF'den tamamlar; ilk
   kullanım ağ ister. `model_family` verilmezse aile dosya başlığından algılanır.
+
+## Faz 5 — görüntü araç seti ekleri (envs/image ile PAYLAŞILIR)
+
+`imgtool` iş türü kendi venv'ini doğurmaz; scheduler'daki `_ENV_ALIAS` sözlüğü
+onu `envs/image`'e yönlendirir (aynı torch/transformers zaten yeterli).
+
+```bash
+uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe \
+  spandrel easyocr einops timm
+```
+
+- `spandrel`: RealESRGAN/ESRGAN ailesini `basicsr`'a ihtiyaç duymadan yükler
+  (basicsr, yeni torchvision'larda kaldırılan `functional_tensor` modülünü
+  import etmeye çalıştığı için kırık — bu yüzden bilinçli olarak atlandı).
+- `easyocr`: torch tabanlı OCR; `paddlepaddle-gpu` yerine tercih edildi çünkü
+  paddle'ın CUDA uyumluluğu RTX 50xx gibi yeni mimarilerde belirsiz, ayrı bir
+  CUDA runtime paketi gerektiriyor — torch rulesına aykırı bir risk.
+- `background_removal` varsayılanı **BiRefNet** (MIT lisans) — RMBG-2.0'ın
+  ticari kısıtlı lisansından kaçınmak için tercih edildi (plan.md'nin verdiği
+  iki seçenekten biri).
+- `captioning` varsayılanı **Florence-2-base** (MIT lisans, ~460MB fp16).
+- `upscale` modeli Model Browser'dan seçilir (zorunlu) — `.pth`/`.safetensors`
+  ESRGAN ailesi ağırlıkları `models/upscale/` altına indirilir.

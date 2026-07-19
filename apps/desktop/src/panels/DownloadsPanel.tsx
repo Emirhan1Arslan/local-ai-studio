@@ -20,6 +20,11 @@ const SUBDIRS = [
   "stt",
   "ocr",
   "embeddings",
+  "background_removal",
+  "upscale",
+  "captioning",
+  "segmentation",
+  "face_restoration",
 ];
 
 function fmtBytes(n: number): string {

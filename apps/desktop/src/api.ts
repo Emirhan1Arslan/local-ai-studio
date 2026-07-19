@@ -149,7 +149,11 @@ export interface AssetInfo {
   kind: string;
   role: string;
   path: string;
-  meta: { params?: Record<string, unknown>; [k: string]: unknown };
+  meta: {
+    params?: Record<string, unknown>;
+    result?: Record<string, unknown>;
+    [k: string]: unknown;
+  };
   created_at: string;
 }
 

@@ -81,12 +81,21 @@ async def create_jobs_batch(req: BatchJobRequest) -> list[JobOut]:
     return [await _get_out(j) for j in job_ids]
 
 
+# imgtool op'ları görsel (PNG) ya da yapılandırılmış metin (JSON) üretir
+_IMGTOOL_IMAGE_OPS = {"bg_remove", "upscale"}
+
+
 def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
     # Görüntü işleri çıktıyı outputs/ altına yazar (proje sistemi bunu asset'e bağlar)
     if kind == "image" and not params.get("output_path"):
         settings = get_settings()
         settings.ensure_dirs()
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")
+    elif kind == "imgtool" and not params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        ext = "png" if params.get("op") in _IMGTOOL_IMAGE_OPS else "json"
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
     with session_scope() as session:
         job = Job(
             kind=kind,

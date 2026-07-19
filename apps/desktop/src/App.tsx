@@ -13,6 +13,7 @@ import ModelsPanel from "./panels/ModelsPanel";
 import QueuePanel from "./panels/QueuePanel";
 import SettingsPanel from "./panels/SettingsPanel";
 import SystemPanel from "./panels/SystemPanel";
+import ToolsPanel from "./panels/ToolsPanel";
 import VramPanel from "./panels/VramPanel";
 import { useStudio } from "./state";
 
@@ -27,10 +28,12 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   vram: VramPanel,
   generate: GeneratePanel,
   settings: SettingsPanel,
+  tools: ToolsPanel,
 };
 
 const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "generate", title: "Üretim", near: "models" },
+  { id: "tools", title: "Araçlar", near: "generate" },
   { id: "downloads", title: "İndirmeler", near: "models" },
   { id: "queue", title: "Kuyruk", near: "models" },
   { id: "vram", title: "VRAM", near: "system" },
