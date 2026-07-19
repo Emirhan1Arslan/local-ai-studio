@@ -87,20 +87,31 @@ def _bad_request(message: str):
     raise ApiError(400, "bad_request", message)
 
 
-def _safe_dest(subdir: str, filename: str, extra_subdir: str = "") -> Path:
+def _safe_dest(
+    subdir: str, filename: str, extra_subdir: str = "", preserve_subpath: bool = False
+) -> Path:
     settings = get_settings()
     if subdir not in MODEL_SUBDIRS:
         _bad_request(f"geçersiz subdir: {subdir!r}")
-    name = Path(filename).name  # yol bileşenlerini at
-    if not name or name in (".", ".."):
-        _bad_request(f"geçersiz dosya adı: {filename!r}")
+    if preserve_subpath:
+        # snapshot indirmede filename, hf_list_repo_files'tan gelen güvenilir bir repo-içi
+        # göreli yoldur (ör. "voices/af_heart.pt") — alt klasör yapısı korunur.
+        rel = Path(filename.replace("\\", "/"))
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+            _bad_request(f"geçersiz dosya adı: {filename!r}")
+        name_part = rel
+    else:
+        name = Path(filename).name  # yol bileşenlerini at
+        if not name or name in (".", ".."):
+            _bad_request(f"geçersiz dosya adı: {filename!r}")
+        name_part = Path(name)
     base = settings.models_dir / subdir
     if extra_subdir:
         safe_extra = Path(extra_subdir).name  # snapshot indirmede repo adı — yol bileşeni değil
         if not safe_extra or safe_extra in (".", ".."):
             _bad_request(f"geçersiz repo adı: {extra_subdir!r}")
         base = base / safe_extra
-    dest = (base / name).resolve()
+    dest = (base / name_part).resolve()
     if settings.models_dir.resolve() not in dest.parents:
         _bad_request("hedef, models dizini dışında")
     return dest
@@ -184,9 +195,11 @@ async def list_hf_repo_files(repo_id: str) -> list[HfFileOut]:
 @router.post("/snapshot")
 async def create_snapshot_download(req: SnapshotRequest) -> list[DownloadOut]:
     """Çok dosyalı bir HF repo'sunu tek seferde kuyruğa alır (Faz 5: BiRefNet, Florence-2,
-    SAM, Grounding DINO gibi tek-dosya olmayan modeller için). Her dosya, mevcut resumable
-    tek-dosya indirme motoruyla ayrı ayrı indirilir; hepsi `models/<subdir>/<repo-adı>/`
-    altında bir arada toplanır — from_pretrained(dizin) bunu doğrudan yükleyebilir.
+    SAM, Grounding DINO gibi tek-dosya olmayan modeller için; Faz 7'de Kokoro'nun
+    `voices/` alt klasörü için de kullanılıyor). Her dosya, mevcut resumable tek-dosya
+    indirme motoruyla ayrı ayrı indirilir; hepsi `models/<subdir>/<repo-adı>/` altında
+    (repo'daki alt klasör yapısı korunarak) bir arada toplanır —
+    from_pretrained(dizin) ya da doğrudan yerel dosya yolu bunu okuyabilir.
     """
     settings = get_settings()
     if req.subdir not in MODEL_SUBDIRS:
@@ -202,11 +215,6 @@ async def create_snapshot_download(req: SnapshotRequest) -> list[DownloadOut]:
     ]
     if not filenames:
         _bad_request("repo'da indirilecek dosya bulunamadı")
-    if any("/" in f for f in filenames):
-        _bad_request(
-            "bu repo alt klasörlü dosyalar içeriyor (ör. varyant/onnx) — "
-            "şimdilik yalnız düz yapılı repo'lar destekleniyor"
-        )
 
     repo_slug = req.repo_id.rsplit("/", 1)[-1]
     headers: dict[str, str] = {}
@@ -215,7 +223,7 @@ async def create_snapshot_download(req: SnapshotRequest) -> list[DownloadOut]:
 
     ids: list[str] = []
     for filename in filenames:
-        dest = _safe_dest(req.subdir, filename, extra_subdir=repo_slug)
+        dest = _safe_dest(req.subdir, filename, extra_subdir=repo_slug, preserve_subpath=True)
         url = hf_resolve_url(req.repo_id, filename, req.revision)
         ids.append(await manager.enqueue(url, dest, source="hf", headers=headers))
     return [await _get_out(i) for i in ids]

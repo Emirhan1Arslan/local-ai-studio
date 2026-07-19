@@ -4,9 +4,11 @@ import {
   createJob,
   fetchAssets,
   fetchJobs,
+  fetchModels,
   uploadAudioFile,
   type AssetInfo,
   type JobInfo,
+  type ModelInfo,
 } from "../api";
 import { useStudio } from "../state";
 
@@ -74,6 +76,8 @@ export default function AudioPanel() {
   // STT
   const [audioFile, setAudioFile] = useState<{ path: string; name: string } | null>(null);
   const [modelSize, setModelSize] = useState("base");
+  const [sttModels, setSttModels] = useState<ModelInfo[]>([]);
+  const [sttModelPath, setSttModelPath] = useState("");
   const [language, setLanguage] = useState("");
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -82,9 +86,12 @@ export default function AudioPanel() {
   // TTS
   const [text, setText] = useState("");
   const [engine, setEngine] = useState<Engine>("kokoro");
+  const [ttsModels, setTtsModels] = useState<ModelInfo[]>([]);
   const [voice, setVoice] = useState("af_heart");
+  const [kokoroModelPath, setKokoroModelPath] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [xttsVoiceMode, setXttsVoiceMode] = useState<"preset" | "clone">("preset");
+  const [xttsModelPath, setXttsModelPath] = useState("");
   const [xttsPresetSpeaker, setXttsPresetSpeaker] = useState(XTTS_PRESET_SPEAKERS[0]);
   const [speakerFile, setSpeakerFile] = useState<{ path: string; name: string } | null>(null);
   const [xttsLanguage, setXttsLanguage] = useState("tr");
@@ -104,9 +111,20 @@ export default function AudioPanel() {
   };
 
   useEffect(() => {
-    if (connected) refresh();
+    if (!connected) return;
+    refresh();
+    fetchModels("stt").then(setSttModels).catch(() => setSttModels([]));
+    fetchModels("tts").then(setTtsModels).catch(() => setTtsModels([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
+
+  // Model Browser'da "tts" altında Kokoro/XTTS'in ana ağırlığı ve tek tek Kokoro
+  // ses paketleri (voices/*.pt) karışık listelenir — her seçici kendi ilgili
+  // dosyasına göre filtreler.
+  const kokoroModels = ttsModels.filter((m) => m.name === "Kokoro-82M");
+  const xttsModels = ttsModels.filter(
+    (m) => m.name === "XTTS-v2" && m.path.toLowerCase().endsWith("model.pth"),
+  );
 
   useEffect(() => {
     let needsRefresh = false;
@@ -196,7 +214,11 @@ export default function AudioPanel() {
         return;
       }
       params.audio_path = audioFile.path;
-      params.model_size = modelSize;
+      if (sttModelPath) {
+        params.model_path = sttModelPath;
+      } else {
+        params.model_size = modelSize;
+      }
       if (language.trim()) params.language = language.trim();
     } else {
       if (!text.trim()) {
@@ -209,8 +231,10 @@ export default function AudioPanel() {
         params.voice = voice;
         params.lang_code = voice.startsWith("b") ? "b" : "a";
         params.speed = speed;
+        if (kokoroModelPath) params.model_path = kokoroModelPath;
       } else {
         params.language = xttsLanguage;
+        if (xttsModelPath) params.model_path = xttsModelPath;
         if (xttsVoiceMode === "preset") {
           params.speaker = xttsPresetSpeaker;
         } else {
@@ -277,7 +301,11 @@ export default function AudioPanel() {
               )}
             </div>
             <div className="dl-row">
-              <select value={modelSize} onChange={(e) => setModelSize(e.target.value)}>
+              <select
+                value={modelSize}
+                onChange={(e) => setModelSize(e.target.value)}
+                disabled={!!sttModelPath}
+              >
                 <option value="tiny">tiny (en hızlı)</option>
                 <option value="base">base</option>
                 <option value="small">small</option>
@@ -290,6 +318,20 @@ export default function AudioPanel() {
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
               />
+            </div>
+            <div className="dl-row">
+              <select value={sttModelPath} onChange={(e) => setSttModelPath(e.target.value)}>
+                <option value="">
+                  {sttModels.length === 0
+                    ? "önbellek/preset kullan (Model Browser'da kayıtlı model yok)"
+                    : "önbellek/preset kullan (yukarıdaki boyut)"}
+                </option>
+                {sttModels.map((m) => (
+                  <option key={m.id} value={m.path}>
+                    {m.name} — Model Browser
+                  </option>
+                ))}
+              </select>
               <span className="muted">çıktı: json + txt + srt + vtt</span>
             </div>
           </>
@@ -340,6 +382,18 @@ export default function AudioPanel() {
                     onChange={(e) => setSpeed(Number(e.target.value))}
                   />
                 </label>
+                <select value={kokoroModelPath} onChange={(e) => setKokoroModelPath(e.target.value)}>
+                  <option value="">
+                    {kokoroModels.length === 0
+                      ? "önbellek kullan (Model Browser'da kayıtlı model yok)"
+                      : "önbellek kullan (ilk kullanımda indirir)"}
+                  </option>
+                  {kokoroModels.map((m) => (
+                    <option key={m.id} value={m.path}>
+                      {m.name} — Model Browser
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
 
@@ -349,6 +403,20 @@ export default function AudioPanel() {
                   XTTS-v2 model ağırlıkları <strong>Coqui Public Model License (CPML)</strong>{" "}
                   ile dağıtılır — yalnızca ticari OLMAYAN kullanım içindir.
                 </p>
+                <div className="dl-row">
+                  <select value={xttsModelPath} onChange={(e) => setXttsModelPath(e.target.value)}>
+                    <option value="">
+                      {xttsModels.length === 0
+                        ? "önbellek kullan (Model Browser'da kayıtlı model yok)"
+                        : "önbellek kullan (ilk kullanımda indirir)"}
+                    </option>
+                    {xttsModels.map((m) => (
+                      <option key={m.id} value={m.path}>
+                        {m.name} — Model Browser
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="mode-tabs">
                   <button
                     type="button"

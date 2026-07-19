@@ -67,6 +67,59 @@ def test_audio_job_fails_gracefully_without_env(client):
     assert "worker ortamı eksik" in d["error"] or "kokoro" in d["error"]
 
 
+def test_stt_model_path_reaches_adapter(client):
+    """Model Browser'dan seçilen model_path, model_size'ın yerine geçer — istek
+    boru hattını (job oluşturma, parametre doğrulama) kırmadan adapter'a ulaşmalı."""
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {
+                "op": "stt",
+                "audio_path": "x.wav",
+                "model_path": r"C:\LocalAIStudio\models\stt\faster-whisper-base\model.bin",
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "worker ortamı eksik" in d["error"] or "faster_whisper" in d["error"]
+
+
+def test_kokoro_model_path_reaches_adapter(client):
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {
+                "op": "tts",
+                "engine": "kokoro",
+                "text": "merhaba",
+                "model_path": r"C:\LocalAIStudio\models\tts\Kokoro-82M\kokoro-v1_0.pth",
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "worker ortamı eksik" in d["error"] or "kokoro" in d["error"]
+
+
+def test_xtts_model_path_reaches_adapter(client):
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {
+                "op": "tts",
+                "engine": "xtts",
+                "text": "merhaba",
+                "speaker": "Ana Florence",
+                "model_path": r"C:\LocalAIStudio\models\tts\XTTS-v2\model.pth",
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "worker ortamı eksik" in d["error"] or "TTS" in d["error"]
+
+
 def test_tts_unknown_engine_fails(client):
     r = client.post(
         "/v1/jobs",

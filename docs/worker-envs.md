@@ -224,3 +224,51 @@ değişikliklerden sonra da temiz geçti.
   klonlanmış Türkçe konuşma (model yükleme 9.4sn, sentez 3.1sn) →
   faster-whisper `language=tr` ile geri transkribe edildi, dil algılama
   %100 güvenle "tr", metin kaynağa yakın eşleşti (round-trip doğrulandı).
+
+### Ses modelleri Model Manager'a entegrasyonu
+
+**Sorun:** faster-whisper/Kokoro/coqui-tts başlangıçta kendi kendine indiriyordu
+(HF Hub'ın global `~/.cache/huggingface/hub` önbelleğine ya da coqui'nin kendi
+`get_user_data_dir()` konumuna) — bu, görüntü araçlarının (`imgtool.py`)
+kullandığı `model_path` + Model Browser deseninden tamamen kopuktu, dolayısıyla
+ses modelleri Modeller panelinde hiç görünmüyordu.
+
+**Çözüm — üç kütüphanenin de yerel-klasörden yükleme desteği doğrulandı:**
+- faster-whisper: `WhisperModel(model_size_or_path, ...)` zaten bir preset adı
+  ya da yerel bir CTranslate2 klasör yolu kabul ediyor — ek kod gerekmedi.
+- Kokoro: `KModel(repo_id=, config=<yerel config.json>, model=<yerel .pth>)` +
+  `KPipeline(..., model=kmodel)` tamamen yerelden yükler; ses paketleri de
+  `voice="<tam .pt yolu>"` verilirse (`.pt` ile bitiyorsa) `hf_hub_download`'a
+  hiç gitmez (`kokoro/pipeline.py::load_single_voice`).
+- coqui-tts: `TTS(model_path=<yerel klasör>, config_path=<yerel config.json>)`
+  kendi `ModelManager` önbelleğini tamamen atlar.
+
+`adapters/audio.py`'deki `_stt`/`_tts_kokoro`/`_tts_xtts` artık opsiyonel bir
+`model_path` parametresi kabul ediyor (Model Browser'dan seçilen ağırlık
+dosyası) — verilirse `os.path.dirname()` ile üst klasöre çözülüp yukarıdaki
+yerel-yükleme yollarına yönlendiriliyor; verilmezse eski self-download
+davranışı (geriye dönük uyumlu) devam ediyor.
+
+**`downloads.py` genellemesi:** `/v1/downloads/snapshot`, önceden yalnızca düz
+yapılı (alt klasörsüz) HF repo'larını destekliyordu — Kokoro-82M'nin
+`voices/*.pt` alt klasörü bu kısıtlamaya takılıyordu. `_safe_dest()`'e
+`preserve_subpath` parametresi eklendi: snapshot indirmede (dosya adları
+`hf_list_repo_files`'tan gelen güvenilir bir listedir) repo-içi göreli yol
+korunuyor (`models/<subdir>/<repo>/voices/af_heart.pt` gibi), path-traversal
+koruması (`..`/mutlak yol reddi) aynen duruyor. Tekil dosya indirme
+endpoint'i (`POST /v1/downloads`, dış istemcilere de açık — ADR-0003)
+değişmedi, hâlâ yalnızca düz dosya adı kabul ediyor.
+
+**Bu makinede canlı olarak yerleştirildi** (indirme motorunu yeniden
+çalıştırmak yerine, zaten kurulum sırasında doğrulanmış kütüphane
+önbelleklerinden doğrudan kopyalandı):
+- `models/tts/Kokoro-82M/{config.json,kokoro-v1_0.pth,voices/*.pt}` (7 ses:
+  af_heart, af_bella, af_nicole, am_adam, am_michael, bf_emma, bm_george)
+- `models/tts/XTTS-v2/{config.json,model.pth,speakers_xtts.pth,vocab.json}`
+- `models/stt/faster-whisper-base/{config.json,model.bin,tokenizer.json,vocabulary.txt}`
+
+Çalışan uygulamanın canlı `ModelWatcher`'ı (watchdog) bu dosyaları anlık
+algılayıp DB'ye kaydetti — ayrı bir rescan adımı gerekmedi. Doğrulama:
+`HF_HUB_OFFLINE=1` + boş `HF_HOME` ile üçü de (Kokoro TTS, XTTS-v2 TTS,
+faster-whisper STT) `model_path` üzerinden hiçbir ağ isteği yapmadan başarıyla
+çalıştı — gerçek "tamamen yerel" yükleme kanıtlandı.

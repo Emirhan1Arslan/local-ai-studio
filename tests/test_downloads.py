@@ -77,6 +77,8 @@ async def fake_server(scope, receive, send):
             ]
             if repo == "nested/repo":
                 siblings = [{"rfilename": "onnx/model.onnx", "size": 2048}]
+            elif repo == "evil/repo":
+                siblings = [{"rfilename": "../../kacak.bin", "size": 2048}]
             elif repo == "empty/repo":
                 siblings = []
             body = json.dumps({"siblings": siblings}).encode()
@@ -279,9 +281,28 @@ def test_snapshot_download_empty_repo_rejected(dl_client):
     assert r.status_code == 400
 
 
-def test_snapshot_download_nested_files_rejected(dl_client):
+def test_snapshot_download_preserves_nested_subpath(dl_client):
+    """Faz 7: Kokoro-82M gibi repo'ların voices/ alt klasörü artık desteklenir —
+    hedef yol repo-içi göreli yapıyı korur (models/<subdir>/<repo>/onnx/model.onnx)."""
     r = dl_client.post(
         "/v1/downloads/snapshot", json={"repo_id": "nested/repo", "subdir": "captioning"}
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    p = Path(rows[0]["dest_path"])
+    assert p.name == "model.onnx"
+    assert p.parent.name == "onnx"
+    assert p.parent.parent.name == "repo"
+    d = _poll(dl_client, rows[0]["id"], {"done", "failed"})
+    assert d["status"] == "done", d["error"]
+
+
+def test_snapshot_download_nested_traversal_rejected(dl_client):
+    """İç-içe klasör desteği path-traversal'a açık kapı bırakmamalı — repo
+    (gerçekte hiç dönmeyecek) bir '../' içeren rfilename dönse bile reddedilir."""
+    r = dl_client.post(
+        "/v1/downloads/snapshot", json={"repo_id": "evil/repo", "subdir": "captioning"}
     )
     assert r.status_code == 400
 

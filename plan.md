@@ -336,6 +336,20 @@ gösteriliyor. XTTS-v2 kurulumu ayrıca sistemde bulunmayan bir FFmpeg paylaşı
 kütüphane bağımlılığı (torchcodec üzerinden) ortaya çıkardı — çözümü ve tam
 bağımlılık zinciri docs/worker-envs.md'de belgelendi.
 
+**Model Manager entegrasyonu (2026-07-19, kullanıcı sorusu üzerine):** Ses
+modelleri başlangıçta kendi kendine indiriyordu (HF Hub global önbelleği /
+coqui'nin kendi önbelleği) ve bu yüzden Modeller panelinde hiç görünmüyordu —
+Faz 2'nin `models/<subdir>/` taraması + Faz 5'in `model_path` deseninden
+kopuktu. Düzeltildi: `adapters/audio.py`'nin üç motoru da (faster-whisper,
+Kokoro, XTTS-v2) artık opsiyonel `model_path` kabul ediyor ve verilirse
+kütüphanenin kendi ağ/önbellek mantığını tamamen atlayıp Model Browser'da
+kayıtlı yerel dosyadan yükleniyor (`HF_HUB_OFFLINE=1` ile canlı doğrulandı —
+gerçek sıfır-ağ yükleme). `/v1/downloads/snapshot` genelleştirildi: artık
+Kokoro'nun `voices/` gibi alt klasörlü HF repo'larını da destekliyor (önceden
+düz yapılı repo'larla sınırlıydı). Üç model ailesi de bu makinede
+`models/tts/` ve `models/stt/` altına yerleştirildi ve Modeller panelinde
+görünür/yönetilebilir hale geldi.
+
 ---
 
 ### FAZ 8 — Video Üretimi ve Düzenleme (6–8 hafta)

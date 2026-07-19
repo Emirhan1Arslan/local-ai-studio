@@ -24,8 +24,11 @@ params:
 
 stt:
 - audio_path: ses dosyası (zorunlu)
-- model_size: tiny|base|small|medium|large-v3 (vars. "base") ya da Model
-  Browser'dan kayıtlı bir CTranslate2 model klasörü yolu
+- model_path: Model Browser'dan seçilen CTranslate2 ağırlık dosyası (ör.
+  .../stt/faster-whisper-base/model.bin) — verilirse üst klasör yüklenir,
+  model_size'ı geçersiz kılar
+- model_size: tiny|base|small|medium|large-v3 (vars. "base") — model_path
+  verilmezse HF Hub'dan kütüphanenin kendi önbelleğine iner
 - language: dil kodu (vars. otomatik algıla, "tr" dahil çok dilli destek) ·
   task: transcribe|translate (vars. transcribe)
 - çıktı: json (segment+zaman damgası) + txt + srt + vtt
@@ -33,6 +36,10 @@ stt:
 tts:
 - text: seslendirilecek metin (zorunlu)
 - engine: kokoro (vars.) | xtts
+- model_path: Model Browser'dan seçilen ağırlık dosyası (kokoro:
+  .../tts/Kokoro-82M/kokoro-v1_0.pth · xtts: .../tts/XTTS-v2/model.pth) —
+  verilirse üst klasörden tamamen yerel yüklenir; verilmezse kütüphanenin
+  kendi önbelleğine iner (ilk kullanımda ağ ister)
 - kokoro: voice (vars. "af_heart") · lang_code (vars. "a", Amerikan İngilizcesi)
 - xtts: language (vars. "en"; tr dahil ~17 dil) · ikisinden biri zorunlu:
   - speaker: 58 hazır sesten biri (model checkpoint'ine gömülü — ör. "Ana
@@ -119,8 +126,8 @@ class AudioAdapter:
 
     # -- STT (faster-whisper) ------------------------------------------------
 
-    def _get_whisper(self, model_size: str):
-        key = f"stt:{model_size}"
+    def _get_whisper(self, model_size_or_path: str):
+        key = f"stt:{model_size_or_path}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -132,7 +139,7 @@ class AudioAdapter:
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         compute_type = "float16" if device == "cuda" else "int8"
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(model_size_or_path, device=device, compute_type=compute_type)
         self._cache[key] = model
         return model
 
@@ -144,14 +151,18 @@ class AudioAdapter:
         if not output_path:
             raise RuntimeError("output_path gerekli")
 
+        model_path = params.get("model_path", "")
         model_size = params.get("model_size") or "base"
+        # Model Browser'dan seçilen ağırlık dosyası (ör. .../model.bin) verilmişse
+        # CTranslate2'nin beklediği üst klasöre çözülür; yoksa preset adı kullanılır.
+        model_target = os.path.dirname(model_path) if model_path else model_size
         language = params.get("language") or None
         task = params.get("task", "transcribe")
         if task not in ("transcribe", "translate"):
             raise RuntimeError(f"bilinmeyen task: {task!r} (transcribe|translate)")
 
         yield {"event": "progress", "value": 0.05, "message": "model yükleniyor…"}
-        model = self._get_whisper(model_size)
+        model = self._get_whisper(model_target)
 
         seg_iter, info = model.transcribe(audio_path, language=language, task=task)
         duration = float(getattr(info, "duration", 0.0) or 0.0)
@@ -205,19 +216,34 @@ class AudioAdapter:
 
     # -- TTS (Kokoro) ---------------------------------------------------------
 
-    def _get_kokoro(self, lang_code: str):
-        key = f"tts:{lang_code}"
+    def _get_kokoro(self, lang_code: str, model_dir: str = ""):
+        key = f"tts:{lang_code}:{model_dir}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
         try:
             import torch
-            from kokoro import KPipeline
+            from kokoro import KModel, KPipeline
         except ImportError as exc:
             raise _import_error("kokoro bulunamadı", exc) from exc
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        pipeline = KPipeline(lang_code=lang_code, device=device)
+        if model_dir:
+            # Model Browser'dan seçilen yerel snapshot — HF Hub'a hiç gitmez.
+            kmodel = (
+                KModel(
+                    repo_id="hexgrad/Kokoro-82M",
+                    config=os.path.join(model_dir, "config.json"),
+                    model=os.path.join(model_dir, "kokoro-v1_0.pth"),
+                )
+                .to(device)
+                .eval()
+            )
+            pipeline = KPipeline(
+                lang_code=lang_code, repo_id="hexgrad/Kokoro-82M", model=kmodel, device=device
+            )
+        else:
+            pipeline = KPipeline(lang_code=lang_code, device=device)
         self._cache[key] = pipeline
         return pipeline
 
@@ -241,16 +267,25 @@ class AudioAdapter:
         lang_code = params.get("lang_code") or "a"
         voice = params.get("voice") or "af_heart"
         speed = float(params.get("speed", 1.0))
+        model_path = params.get("model_path", "")
+        model_dir = os.path.dirname(model_path) if model_path else ""
 
         yield {"event": "progress", "value": 0.1, "message": "model yükleniyor…"}
-        pipeline = self._get_kokoro(lang_code)
+        pipeline = self._get_kokoro(lang_code, model_dir)
 
         import numpy as np
         import soundfile as sf
 
+        # Yerel snapshot'ta bu ses varsa (voices/<isim>.pt) HF Hub'a hiç gidilmez.
+        voice_arg = voice
+        if model_dir:
+            local_voice = os.path.join(model_dir, "voices", f"{voice}.pt")
+            if os.path.isfile(local_voice):
+                voice_arg = local_voice
+
         yield {"event": "progress", "value": 0.3, "message": "sentezleniyor…"}
         chunks = []
-        for _gs, _ps, audio in pipeline(text, voice=voice, speed=speed):
+        for _gs, _ps, audio in pipeline(text, voice=voice_arg, speed=speed):
             chunks.append(audio)
         if not chunks:
             raise RuntimeError("ses üretilemedi (boş çıktı)")
@@ -271,8 +306,8 @@ class AudioAdapter:
 
     # -- TTS (XTTS-v2 — ses klonlama, çok dilli) ------------------------------
 
-    def _get_xtts(self):
-        key = "tts:xtts"
+    def _get_xtts(self, model_dir: str = ""):
+        key = f"tts:xtts:{model_dir}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -287,7 +322,15 @@ class AudioAdapter:
             raise _import_error("coqui-tts (TTS.api) bulunamadı", exc) from exc
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        if model_dir:
+            # Model Browser'dan seçilen yerel snapshot — coqui'nin kendi
+            # ModelManager önbelleğine hiç gitmez.
+            tts = TTS(
+                model_path=model_dir,
+                config_path=os.path.join(model_dir, "config.json"),
+            ).to(device)
+        else:
+            tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
         self._cache[key] = tts
         return tts
 
@@ -306,9 +349,11 @@ class AudioAdapter:
                 "etik onay şartı)."
             )
         language = params.get("language") or "en"
+        model_path = params.get("model_path", "")
+        model_dir = os.path.dirname(model_path) if model_path else ""
 
         yield {"event": "progress", "value": 0.1, "message": "XTTS-v2 model yükleniyor…"}
-        tts = self._get_xtts()
+        tts = self._get_xtts(model_dir)
 
         yield {
             "event": "progress",
