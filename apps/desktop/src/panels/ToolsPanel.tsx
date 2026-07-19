@@ -12,16 +12,27 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-type Op = "bg_remove" | "upscale" | "caption" | "ocr";
+type Op = "bg_remove" | "upscale" | "caption" | "ocr" | "segment" | "crop" | "adjust";
+type SegMode = "point" | "box" | "text";
 
 const OP_LABELS: Record<Op, string> = {
   bg_remove: "arka plan kaldır",
   upscale: "büyüt",
   caption: "başlıkla",
   ocr: "metin oku",
+  segment: "segmentle",
+  crop: "kırp",
+  adjust: "ayarla",
 };
 
-const IMAGE_OPS = new Set<string>(["bg_remove", "upscale"]);
+const IMAGE_OPS = new Set<string>(["bg_remove", "upscale", "segment", "crop", "adjust"]);
+const ADJUST_KEYS = ["brightness", "contrast", "saturation", "sharpness"] as const;
+const ADJUST_LABELS: Record<(typeof ADJUST_KEYS)[number], string> = {
+  brightness: "parlaklık",
+  contrast: "kontrast",
+  saturation: "doygunluk",
+  sharpness: "keskinlik",
+};
 
 interface SourcePick {
   path: string;
@@ -29,15 +40,123 @@ interface SourcePick {
   assetId?: string;
 }
 
+interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
 function outUrl(path: string): string {
   return apiUrl(`/outputs/${path.split(/[\\/]/).pop()}`);
 }
 
-/** Bir asset'in tuvalde gösterilebilir bir görsel çıktısı var mı (üretim ya da bg_remove/upscale)? */
+/** Bir asset'in tuvalde gösterilebilir bir görsel çıktısı var mı (üretim ya da görsel-çıktılı imgtool op'ları)? */
 function isImageAsset(a: AssetInfo): boolean {
   if (a.kind === "image") return true;
   const op = a.meta.params?.op as string | undefined;
   return a.kind === "imgtool" && !!op && IMAGE_OPS.has(op);
+}
+
+/** Fare/dokunmatik ile tek bir dikdörtgen seçimi — crop ve segment(box) tarafından paylaşılır. */
+function BoxPicker({
+  src,
+  box,
+  onChange,
+}: {
+  src: string;
+  box: Box | null;
+  onChange: (b: Box) => void;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [nat, setNat] = useState({ w: 1, h: 1 });
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+
+  const toNatural = (clientX: number, clientY: number) => {
+    const rect = imgRef.current!.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * nat.w;
+    const y = ((clientY - rect.top) / rect.height) * nat.h;
+    return { x: Math.max(0, Math.min(nat.w, x)), y: Math.max(0, Math.min(nat.h, y)) };
+  };
+
+  return (
+    <div className="box-picker">
+      <img
+        ref={imgRef}
+        src={src}
+        alt=""
+        draggable={false}
+        onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+        onPointerDown={(e) => {
+          const p = toNatural(e.clientX, e.clientY);
+          dragStart.current = p;
+          onChange({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+        }}
+        onPointerMove={(e) => {
+          if (!dragStart.current) return;
+          const p = toNatural(e.clientX, e.clientY);
+          onChange({
+            x1: Math.min(dragStart.current.x, p.x),
+            y1: Math.min(dragStart.current.y, p.y),
+            x2: Math.max(dragStart.current.x, p.x),
+            y2: Math.max(dragStart.current.y, p.y),
+          });
+        }}
+        onPointerUp={() => (dragStart.current = null)}
+      />
+      {box && nat.w > 1 && (
+        <div
+          className="box-overlay"
+          style={{
+            left: `${(box.x1 / nat.w) * 100}%`,
+            top: `${(box.y1 / nat.h) * 100}%`,
+            width: `${((box.x2 - box.x1) / nat.w) * 100}%`,
+            height: `${((box.y2 - box.y1) / nat.h) * 100}%`,
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Tıklayarak ön plan noktaları işaretleme — segment(point) için. */
+function PointPicker({
+  src,
+  points,
+  onChange,
+}: {
+  src: string;
+  points: [number, number][];
+  onChange: (p: [number, number][]) => void;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [nat, setNat] = useState({ w: 1, h: 1 });
+
+  return (
+    <div className="box-picker">
+      <img
+        ref={imgRef}
+        src={src}
+        alt=""
+        draggable={false}
+        onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+        onClick={(e) => {
+          const rect = imgRef.current!.getBoundingClientRect();
+          const x = ((e.clientX - rect.left) / rect.width) * nat.w;
+          const y = ((e.clientY - rect.top) / rect.height) * nat.h;
+          onChange([...points, [x, y]]);
+        }}
+      />
+      {nat.w > 1 &&
+        points.map(([x, y], i) => (
+          <div
+            key={i}
+            className="point-dot"
+            style={{ left: `${(x / nat.w) * 100}%`, top: `${(y / nat.h) * 100}%` }}
+          />
+        ))}
+    </div>
+  );
 }
 
 export default function ToolsPanel() {
@@ -51,6 +170,18 @@ export default function ToolsPanel() {
   const [captionModel, setCaptionModel] = useState("");
   const [captionTask, setCaptionTask] = useState("short");
   const [ocrLangs, setOcrLangs] = useState("en");
+  const [segMode, setSegMode] = useState<SegMode>("text");
+  const [segText, setSegText] = useState("");
+  const [segBox, setSegBox] = useState<Box | null>(null);
+  const [segPoints, setSegPoints] = useState<[number, number][]>([]);
+  const [segCutout, setSegCutout] = useState(false);
+  const [cropBox, setCropBox] = useState<Box | null>(null);
+  const [adjustVals, setAdjustVals] = useState<Record<string, number>>({
+    brightness: 1,
+    contrast: 1,
+    saturation: 1,
+    sharpness: 1,
+  });
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, { value: number; message: string }>>({});
@@ -95,6 +226,9 @@ export default function ToolsPanel() {
     try {
       const up = await uploadImageFile(file);
       setSource({ path: up.path, url: URL.createObjectURL(file) });
+      setSegBox(null);
+      setSegPoints([]);
+      setCropBox(null);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     }
@@ -102,6 +236,9 @@ export default function ToolsPanel() {
 
   const useAsset = (a: AssetInfo) => {
     setSource({ path: a.path, url: outUrl(a.path), assetId: a.id });
+    setSegBox(null);
+    setSegPoints([]);
+    setCropBox(null);
   };
 
   const run = async (ev: React.FormEvent) => {
@@ -127,6 +264,41 @@ export default function ToolsPanel() {
     }
     if (op === "ocr") {
       params.langs = ocrLangs.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    if (op === "segment") {
+      params.mode = segMode;
+      params.cutout = segCutout;
+      if (segMode === "text") {
+        if (!segText.trim()) {
+          setFormError('metin girin (ör. "kırmızı araba")');
+          return;
+        }
+        params.text_prompt = segText.trim();
+      } else if (segMode === "box") {
+        if (!segBox) {
+          setFormError("bir kutu çizin");
+          return;
+        }
+        params.box = [segBox.x1, segBox.y1, segBox.x2, segBox.y2];
+      } else {
+        if (segPoints.length === 0) {
+          setFormError("en az bir nokta işaretleyin");
+          return;
+        }
+        params.points = segPoints;
+      }
+    }
+    if (op === "crop") {
+      if (!cropBox) {
+        setFormError("bir kırpma alanı çizin");
+        return;
+      }
+      params.box = [cropBox.x1, cropBox.y1, cropBox.x2, cropBox.y2];
+    }
+    if (op === "adjust") {
+      for (const [k, v] of Object.entries(adjustVals)) {
+        if (v !== 1) params[k] = v;
+      }
     }
     try {
       await createJob("imgtool", params);
@@ -156,7 +328,9 @@ export default function ToolsPanel() {
               onChange={(e) => e.target.files?.[0] && pickFile(e.target.files[0])}
             />
           </label>
-          {source && <img className="init-thumb" src={source.url} alt="" />}
+          {source && !((op === "crop") || (op === "segment" && segMode !== "text")) && (
+            <img className="init-thumb" src={source.url} alt="" />
+          )}
           {source && (
             <button type="button" onClick={() => setSource(null)}>
               kaldır
@@ -228,6 +402,69 @@ export default function ToolsPanel() {
               value={ocrLangs}
               onChange={(e) => setOcrLangs(e.target.value)}
             />
+            <span className="muted">çıktı: json + txt + hOCR</span>
+          </div>
+        )}
+
+        {op === "segment" && (
+          <>
+            <div className="dl-row">
+              <select value={segMode} onChange={(e) => setSegMode(e.target.value as SegMode)}>
+                <option value="text">metinle (açık kelime dağarcığı)</option>
+                <option value="box">kutu çizerek</option>
+                <option value="point">nokta işaretleyerek</option>
+              </select>
+              <label className="gen-num">
+                <input
+                  type="checkbox"
+                  checked={segCutout}
+                  onChange={(e) => setSegCutout(e.target.checked)}
+                />{" "}
+                kesim (RGBA) de üret
+              </label>
+            </div>
+            {segMode === "text" && (
+              <div className="dl-row">
+                <input
+                  type="text"
+                  placeholder='ör. "kırmızı araba"'
+                  value={segText}
+                  onChange={(e) => setSegText(e.target.value)}
+                />
+              </div>
+            )}
+            {segMode === "box" && source && (
+              <BoxPicker src={source.url} box={segBox} onChange={setSegBox} />
+            )}
+            {segMode === "point" && source && (
+              <>
+                <PointPicker src={source.url} points={segPoints} onChange={setSegPoints} />
+                <div className="dl-row">
+                  <span className="muted">{segPoints.length} nokta işaretlendi</span>
+                  <button type="button" onClick={() => setSegPoints([])}>
+                    noktaları temizle
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+        {op === "crop" && source && <BoxPicker src={source.url} box={cropBox} onChange={setCropBox} />}
+        {op === "adjust" && (
+          <div className="dl-row">
+            {ADJUST_KEYS.map((k) => (
+              <label className="gen-num" key={k}>
+                {ADJUST_LABELS[k]}{" "}
+                <input
+                  type="number"
+                  min={0}
+                  max={3}
+                  step={0.1}
+                  value={adjustVals[k]}
+                  onChange={(e) => setAdjustVals({ ...adjustVals, [k]: Number(e.target.value) })}
+                />
+              </label>
+            ))}
           </div>
         )}
 

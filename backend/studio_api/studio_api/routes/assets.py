@@ -66,7 +66,8 @@ async def regenerate(asset_id: str) -> RegenerateOut:
             elif kind == "imgtool":
                 settings = get_settings()
                 settings.ensure_dirs()
-                ext = "png" if params.get("op") in ("bg_remove", "upscale") else "json"
+                image_ops = ("bg_remove", "upscale", "segment", "crop", "adjust")
+                ext = "png" if params.get("op") in image_ops else "json"
                 params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
             job = Job(
                 kind=kind,

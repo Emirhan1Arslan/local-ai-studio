@@ -5,9 +5,9 @@ scheduler._ENV_ALIAS) çalışır. 3.11+ sözdizimi KULLANMA. Ağır importlar (
 transformers/spandrel/easyocr) metod içindedir; API süreci bu modülü hiç yüklemez.
 
 params:
-- op: bg_remove | upscale | caption | ocr (zorunlu)
+- op: bg_remove | upscale | caption | ocr | segment | crop | adjust (zorunlu)
 - image_path: kaynak görsel (zorunlu, tüm op'lar için)
-- output_path: route doldurur (bg_remove/upscale: PNG; caption/ocr: JSON)
+- output_path: route doldurur (görsel çıktılı op'lar: PNG; caption/ocr: JSON)
 - model_path: op'a özgü model (opsiyonel; boşsa varsayılan HF repo kullanılır)
   - bg_remove varsayılan: ZhengPeng7/BiRefNet (MIT lisans — RMBG-2.0'ın ticari
     kısıtlı lisansından kaçınmak için tercih edildi)
@@ -15,7 +15,16 @@ params:
   - upscale: Model Browser'dan bir .pth/.safetensors ZORUNLU (spandrel ile yüklenir —
     RealESRGAN/ESRGAN ailesini basicsr'a ihtiyaç duymadan çalıştırır)
 - caption task: short | detailed | objects (vars. short)
-- ocr langs: dil kodları listesi (vars. ["en"])
+- ocr langs: dil kodları listesi (vars. ["en"]); çıktı: json + txt + hOCR
+- segment mode: point | box | text
+  - point: points=[[x,y],...] · point_labels=[1,0,...] (vars. hepsi ön plan)
+  - box: box=[x1,y1,x2,y2]
+  - text: text_prompt="kırmızı araba" — Grounding DINO ile açık kelime dağarcığı
+    tespiti, en yüksek skorlu kutu SAM'e verilir (box_threshold/text_threshold opsiyonel)
+  - cutout: true ise maskeyle birlikte RGBA kesim de üretir (result.cutout_path)
+  - varsayılan modeller: facebook/sam-vit-base, IDEA-Research/grounding-dino-tiny
+- crop box: [x1,y1,x2,y2] (zorunlu)
+- adjust: brightness/contrast/saturation/sharpness (0'dan büyük çarpanlar, 1.0=değişiklik yok)
 """
 
 from __future__ import annotations
@@ -29,6 +38,42 @@ _FLORENCE_TASKS = {
     "detailed": "<DETAILED_CAPTION>",
     "objects": "<OD>",
 }
+
+_SAM_DEFAULT = "facebook/sam-vit-base"
+_DINO_DEFAULT = "IDEA-Research/grounding-dino-tiny"
+
+
+def _hocr_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _make_hocr(items: list[dict], width: int, height: int) -> str:
+    """OCR sonuçlarını minimal ama geçerli bir hOCR belgesine dönüştürür (plan.md Faz 5)."""
+    words = []
+    for i, item in enumerate(items):
+        xs = [p[0] for p in item["bbox"]]
+        ys = [p[1] for p in item["bbox"]]
+        x0, y0, x1, y1 = int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
+        conf = int(item["confidence"] * 100)
+        words.append(
+            f'<span class="ocrx_word" id="word_{i + 1}" '
+            f'title="bbox {x0} {y0} {x1} {y1}; x_wconf {conf}">{_hocr_escape(item["text"])}</span>'
+        )
+    body = " ".join(words)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml">\n<head>\n'
+        '<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />\n'
+        '<meta name="ocr-system" content="local-ai-studio easyocr" />\n'
+        '<meta name="ocr-capabilities" content="ocr_page ocrx_word" />\n'
+        "</head>\n<body>\n"
+        f'<div class="ocr_page" id="page_1" title="bbox 0 0 {width} {height}">\n'
+        f'<div class="ocr_carea" id="block_1"><p class="ocr_par" id="par_1">'
+        f'<span class="ocr_line" id="line_1">{body}</span></p></div>\n'
+        "</div>\n</body>\n</html>\n"
+    )
 
 
 def _import_error(hint: str, exc: ImportError) -> RuntimeError:
@@ -52,10 +97,16 @@ class ImgToolAdapter:
             "upscale": self._upscale,
             "caption": self._caption,
             "ocr": self._ocr,
+            "segment": self._segment,
+            "crop": self._crop,
+            "adjust": self._adjust,
         }
         handler = handlers.get(op)
         if handler is None:
-            raise RuntimeError(f"bilinmeyen op: {op!r} (bg_remove|upscale|caption|ocr)")
+            raise RuntimeError(
+                f"bilinmeyen op: {op!r} "
+                "(bg_remove|upscale|caption|ocr|segment|crop|adjust)"
+            )
         image_path = params.get("image_path", "")
         if not image_path:
             raise RuntimeError("image_path gerekli")
@@ -274,11 +325,17 @@ class ImgToolAdapter:
         ]
         full_text = "\n".join(item["text"] for item in items)
 
+        from PIL import Image
+
+        width, height = Image.open(image_path).size  # torch gerekmez, hafif
+
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump({"items": items, "text": full_text}, f, ensure_ascii=False, indent=2)
-        txt_path = output_path.rsplit(".", 1)[0] + ".txt"
-        with open(txt_path, "w", encoding="utf-8") as f:
+        base = output_path.rsplit(".", 1)[0]
+        with open(base + ".txt", "w", encoding="utf-8") as f:
             f.write(full_text)
+        with open(base + ".hocr", "w", encoding="utf-8") as f:
+            f.write(_make_hocr(items, width, height))
 
         yield {
             "event": "done",
@@ -287,6 +344,210 @@ class ImgToolAdapter:
                 "op": "ocr",
                 "text": full_text,
                 "item_count": len(items),
+                "hocr_path": base + ".hocr",
+            },
+        }
+
+    # -- segmentasyon (SAM + Grounding DINO ile metinden segment) -----------
+
+    def _get_sam(self, model_path: str):
+        key = f"sam:{model_path}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            import torch
+            from transformers import SamModel, SamProcessor
+        except ImportError as exc:
+            raise _import_error("torch/transformers bulunamadı", exc) from exc
+
+        model = SamModel.from_pretrained(model_path)
+        processor = SamProcessor.from_pretrained(model_path)
+        model.eval()
+        if torch.cuda.is_available():
+            model.to("cuda")
+        self._cache[key] = (model, processor)
+        return model, processor
+
+    def _get_grounding_dino(self, model_path: str):
+        key = f"dino:{model_path}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            import torch
+            from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+        except ImportError as exc:
+            raise _import_error("torch/transformers bulunamadı", exc) from exc
+
+        model = AutoModelForZeroShotObjectDetection.from_pretrained(model_path)
+        processor = AutoProcessor.from_pretrained(model_path)
+        model.eval()
+        if torch.cuda.is_available():
+            model.to("cuda")
+        self._cache[key] = (model, processor)
+        return model, processor
+
+    def _segment(self, params: dict, image_path: str, output_path: str) -> Iterator[dict]:
+        mode = str(params.get("mode", "point"))
+        if mode not in ("point", "box", "text"):
+            raise RuntimeError(f"bilinmeyen segment mode: {mode!r} (point|box|text)")
+
+        box: list[float] | None = None
+        dino_score: float | None = None
+        if mode == "box":
+            box = params.get("box")
+            if not box or len(box) != 4:
+                raise RuntimeError("mode=box için box=[x1,y1,x2,y2] gerekli")
+        elif mode == "text":
+            text_prompt = str(params.get("text_prompt", "")).strip()
+            if not text_prompt:
+                raise RuntimeError("mode=text için text_prompt gerekli")
+            dino_path = params.get("dino_model") or _DINO_DEFAULT
+            yield {"event": "progress", "value": 0.1, "message": "Grounding DINO yükleniyor…"}
+            dino_model, dino_processor = self._get_grounding_dino(dino_path)
+
+            import torch
+            from PIL import Image
+
+            image = Image.open(image_path).convert("RGB")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # HF örnekleri: sorgu küçük harf + nokta ile bitmeli
+            query = text_prompt.lower().rstrip(".") + "."
+            dino_inputs = dino_processor(images=image, text=query, return_tensors="pt").to(device)
+            yield {"event": "progress", "value": 0.3, "message": "nesne aranıyor…"}
+            with torch.no_grad():
+                dino_out = dino_model(**dino_inputs)
+            detected = dino_processor.post_process_grounded_object_detection(
+                dino_out,
+                input_ids=dino_inputs.input_ids,
+                # Varsayılan eşik 0.35→0.4: canlı testte "spaceship" gibi sahnede
+                # olmayan nesneler için bile neredeyse tüm kareyi kaplayan düşük
+                # güvenli kutular sızıyordu — eşik yükseltilip DINO skoru sonuca
+                # eklendi ki kullanıcı zayıf eşleşmeyi görebilsin.
+                box_threshold=float(params.get("box_threshold", 0.4)),
+                text_threshold=float(params.get("text_threshold", 0.3)),
+                target_sizes=[(image.height, image.width)],
+            )[0]
+            if len(detected["boxes"]) == 0:
+                raise RuntimeError(
+                    f"'{text_prompt}' için bölge bulunamadı (eşikleri düşürmeyi deneyin)"
+                )
+            best = int(detected["scores"].argmax())
+            box = [float(v) for v in detected["boxes"][best].tolist()]
+            dino_score = float(detected["scores"][best])
+
+        sam_path = params.get("sam_model") or _SAM_DEFAULT
+        yield {"event": "progress", "value": 0.5, "message": "SAM yükleniyor…"}
+        sam_model, sam_processor = self._get_sam(sam_path)
+
+        import torch
+        from PIL import Image
+
+        image = Image.open(image_path).convert("RGB")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if mode == "point":
+            points = params.get("points")
+            if not points:
+                raise RuntimeError("mode=point için points=[[x,y],...] gerekli")
+            labels = params.get("point_labels") or [1] * len(points)
+            sam_inputs = sam_processor(
+                image,
+                input_points=[[list(p) for p in points]],
+                input_labels=[list(labels)],
+                return_tensors="pt",
+            ).to(device)
+        else:
+            assert box is not None
+            sam_inputs = sam_processor(image, input_boxes=[[list(box)]], return_tensors="pt").to(
+                device
+            )
+
+        yield {"event": "progress", "value": 0.8, "message": "maske çıkarılıyor…"}
+        with torch.no_grad():
+            sam_out = sam_model(**sam_inputs)
+        masks = sam_processor.image_processor.post_process_masks(
+            sam_out.pred_masks.cpu(),
+            sam_inputs["original_sizes"].cpu(),
+            sam_inputs["reshaped_input_sizes"].cpu(),
+        )
+        scores = sam_out.iou_scores[0, 0]
+        best_idx = int(scores.argmax())
+        mask_tensor = masks[0][0, best_idx]
+
+        mask_img = Image.fromarray((mask_tensor.numpy() * 255).astype("uint8"), mode="L")
+        mask_img.save(output_path)
+
+        result: dict[str, Any] = {
+            "path": output_path,
+            "op": "segment",
+            "mode": mode,
+            "width": mask_img.width,
+            "height": mask_img.height,
+            # SAM'in maskeye güveni (kutu/nokta ne olursa olsun genelde yüksektir)
+            "score": float(scores[best_idx]),
+        }
+        if box is not None:
+            result["box"] = box
+        if dino_score is not None:
+            result["dino_score"] = dino_score  # Grounding DINO'nun metin eşleşme güveni
+
+        if bool(params.get("cutout", False)):
+            cutout = image.convert("RGBA")
+            cutout.putalpha(mask_img)
+            cutout_path = output_path.rsplit(".", 1)[0] + "_cutout.png"
+            cutout.save(cutout_path)
+            result["cutout_path"] = cutout_path
+
+        yield {"event": "done", "result": result}
+
+    # -- kırpma (saf PIL, torch gerekmez) ------------------------------------
+
+    def _crop(self, params: dict, image_path: str, output_path: str) -> Iterator[dict]:
+        from PIL import Image
+
+        box = params.get("box")
+        if not box or len(box) != 4:
+            raise RuntimeError("crop için box=[x1,y1,x2,y2] gerekli")
+        yield {"event": "progress", "value": 0.3, "message": "kırpılıyor…"}
+        image = Image.open(image_path).convert("RGB")
+        x1, x2 = sorted((max(0, int(box[0])), min(image.width, int(box[2]))))
+        y1, y2 = sorted((max(0, int(box[1])), min(image.height, int(box[3]))))
+        if x2 <= x1 or y2 <= y1:
+            raise RuntimeError("geçersiz kırpma alanı")
+        out = image.crop((x1, y1, x2, y2))
+        out.save(output_path)
+        yield {
+            "event": "done",
+            "result": {"path": output_path, "op": "crop", "width": out.width, "height": out.height},
+        }
+
+    # -- temel ayarlar (saf PIL, torch gerekmez) -----------------------------
+
+    def _adjust(self, params: dict, image_path: str, output_path: str) -> Iterator[dict]:
+        from PIL import Image, ImageEnhance
+
+        yield {"event": "progress", "value": 0.3, "message": "uygulanıyor…"}
+        image = Image.open(image_path).convert("RGB")
+        enhancers = {
+            "brightness": ImageEnhance.Brightness,
+            "contrast": ImageEnhance.Contrast,
+            "saturation": ImageEnhance.Color,
+            "sharpness": ImageEnhance.Sharpness,
+        }
+        for name, cls in enhancers.items():
+            factor = params.get(name)
+            if factor is not None:
+                image = cls(image).enhance(float(factor))
+        image.save(output_path)
+        yield {
+            "event": "done",
+            "result": {
+                "path": output_path,
+                "op": "adjust",
+                "width": image.width,
+                "height": image.height,
             },
         }
 
@@ -302,4 +563,12 @@ class ImgToolAdapter:
 
     def vram_estimate(self, params: dict) -> int:
         op = params.get("op", "")
-        return {"bg_remove": 2000, "upscale": 2000, "caption": 1500, "ocr": 1500}.get(op, 1000)
+        return {
+            "bg_remove": 2000,
+            "upscale": 2000,
+            "caption": 1500,
+            "ocr": 1500,
+            "segment": 2500,  # SAM + Grounding DINO ikisi de belleğe alınabilir
+            "crop": 0,
+            "adjust": 0,
+        }.get(op, 1000)
