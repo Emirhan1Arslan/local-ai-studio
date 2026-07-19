@@ -69,6 +69,11 @@ async def regenerate(asset_id: str) -> RegenerateOut:
                 image_ops = ("bg_remove", "upscale", "segment", "crop", "adjust", "face_restore")
                 ext = "png" if params.get("op") in image_ops else "json"
                 params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+            elif kind == "audio":
+                settings = get_settings()
+                settings.ensure_dirs()
+                ext = "wav" if params.get("op") == "tts" else "json"
+                params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
             job = Job(
                 kind=kind,
                 params=params,

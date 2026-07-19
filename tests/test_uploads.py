@@ -45,3 +45,12 @@ def test_upload_rejects_bad_extension(client):
 def test_upload_rejects_invalid_base64(client):
     r = client.post("/v1/uploads", json={"filename": "a.png", "data_base64": "%%%bozuk%%%"})
     assert r.status_code == 400
+
+
+def test_upload_accepts_audio_extensions(client):
+    for ext in ("wav", "mp3", "webm", "m4a", "flac", "ogg"):
+        r = client.post(
+            "/v1/uploads", json={"filename": f"kayit.{ext}", "data_base64": _b64(b"sahte-ses")}
+        )
+        assert r.status_code == 200, f"{ext}: {r.text}"
+        assert r.json()["path"].endswith(f".{ext}")

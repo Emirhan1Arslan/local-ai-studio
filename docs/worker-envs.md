@@ -130,3 +130,33 @@ sorunsuz çalışıyor.
   tarafından otomatik algılanıyor (`chat_format` parametresi verilmiyor).
 - `n_gpu_layers=-1` (vars.): tüm katmanlar GPU'ya — 32 GB VRAM'de küçük/orta
   GGUF modeller için sorunsuz.
+
+## Faz 7 — audio env (envs/audio, AYRI venv)
+
+```bash
+uv venv ~/LocalAIStudio/envs/audio \
+  --python "C:\Users\Tars\AppData\Local\Programs\Python\Python310\python.exe" \
+  --system-site-packages
+uv pip install --python ~/LocalAIStudio/envs/audio/Scripts/python.exe \
+  faster-whisper kokoro soundfile
+```
+
+llama.cpp'nin aksine **ek bir PATH/DLL düzeltmesi gerekmedi** — hem
+`ctranslate2` (faster-whisper'ın çalışma zamanı) hem `kokoro`'nun torch
+bağımlılığı, CUDA'yı kendi başına buldu (`ctranslate2.get_cuda_device_count()`
+→ 1, `torch.cuda.is_available()` → True). Muhtemelen bu wheel'ler CUDA çalışma
+zamanını kendi paket içlerinde taşıyor (llama-cpp-python'ın cu124 wheel'inin
+aksine, o dışarıdan cudart/cublas bekliyordu).
+
+- `stt`: faster-whisper, `model_size` bir HF preset adı (tiny/base/small/
+  medium/large-v3 — ilk kullanımda kendi HF cache'ine iner) ya da Model
+  Browser'dan kayıtlı bir CTranslate2 model klasörü yolu olabilir.
+- `tts`: Kokoro-82M (MIT lisans). İlk kullanımda `kokoro` paketi kendiliğinden
+  bir spacy İngilizce modeli (`en_core_web_sm`, ~13 MB) indirir — metin→fonem
+  (G2P) ayrıştırması için gerekli, tek seferlik.
+- **Bilinen dil sınırı:** Kokoro'nun varsayılan sesleri (lang_code "a"/"b")
+  yalnızca İngilizce fonemleştirme yapıyor. Türkçe metin bu seslerle
+  seslendirilirse harfler İngilizce okunuş kurallarıyla telaffuz edilir
+  (canlı testte yakalandı: "hoş geldiniz" → "Hosh Geldon is" gibi duyuluyor).
+  Bu bir kod hatası değil, model kapsamı sınırı — Kokoro v1.0 sınırlı sayıda
+  ek dil (ja/zh/es/fr/hi/it/pt) destekliyor, Türkçe şimdilik yok.

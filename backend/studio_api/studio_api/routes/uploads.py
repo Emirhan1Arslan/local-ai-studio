@@ -1,8 +1,9 @@
 """Yükleme ucu (Faz 4): img2img/inpaint/controlnet için kaynak görsel + maske.
+Faz 7'de ses dosyaları (mikrofon kaydı / dosya transkripsiyonu) için genişletildi.
 
-Tarayıcı UI'ı yerel dosya yoluna erişemez; görseli base64 ile buraya yükler,
-dönen yol iş parametrelerinde (init_image / mask_image / controlnet image)
-kullanılır. Dosyalar ~/LocalAIStudio/uploads altına yazılır.
+Tarayıcı UI'ı yerel dosya yoluna erişemez; görseli/sesi base64 ile buraya yükler,
+dönen yol iş parametrelerinde (init_image / mask_image / controlnet image /
+audio_path) kullanılır. Dosyalar ~/LocalAIStudio/uploads altına yazılır.
 """
 
 from __future__ import annotations
@@ -18,8 +19,19 @@ from studio_core.config import get_settings
 
 router = APIRouter(prefix="/v1/uploads", tags=["uploads"])
 
-_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
-_MAX_BYTES = 32 * 1024 * 1024
+_ALLOWED_EXT = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".wav",
+    ".mp3",
+    ".m4a",
+    ".flac",
+    ".ogg",
+    ".webm",
+}
+_MAX_BYTES = 100 * 1024 * 1024
 
 
 class UploadRequest(BaseModel):
@@ -39,13 +51,14 @@ async def create_upload(req: UploadRequest) -> UploadOut:
     name = Path(req.filename).name  # path traversal koruması: yalnız dosya adı
     ext = Path(name).suffix.lower()
     if ext not in _ALLOWED_EXT:
-        raise ApiError(400, "bad_request", f"desteklenmeyen uzantı: {ext!r} (png/jpg/jpeg/webp)")
+        allowed = "/".join(sorted(e.lstrip(".") for e in _ALLOWED_EXT))
+        raise ApiError(400, "bad_request", f"desteklenmeyen uzantı: {ext!r} ({allowed})")
     try:
         data = base64.b64decode(req.data_base64, validate=True)
     except Exception as exc:
         raise ApiError(400, "bad_request", "geçersiz base64 verisi") from exc
     if len(data) > _MAX_BYTES:
-        raise ApiError(413, "too_large", "dosya 32 MB sınırını aşıyor")
+        raise ApiError(413, "too_large", "dosya 100 MB sınırını aşıyor")
 
     settings = get_settings()
     settings.ensure_dirs()

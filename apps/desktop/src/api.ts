@@ -197,6 +197,18 @@ export async function uploadDataUrl(filename: string, dataUrl: string): Promise<
   return postUpload(filename, dataUrl.split(",", 2)[1] ?? "");
 }
 
+/** Ses dosyası/mikrofon kaydı yükleme — postUpload aynı, yalnızca isimlendirme netliği için. */
+export async function uploadAudioFile(file: File | Blob, filename = "kayit.webm"): Promise<UploadOut> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const name = file instanceof File ? file.name : filename;
+  return postUpload(name, dataUrl.split(",", 2)[1] ?? "");
+}
+
 export async function regenerateAsset(id: string): Promise<{ job_id: string }> {
   const r = await req(`/v1/assets/${id}/regenerate`, { method: "POST" });
   if (!r.ok) throw new Error(`regenerate ${r.status}`);

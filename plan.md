@@ -283,6 +283,20 @@ Her fazda: **Amaç → Adımlar → Çıktılar → Kabul Kriterleri (DoD)**. Te
 
 **DoD:** Qwen GGUF referans donanımda akıcı stream eder; 100 PDF'lik korpusa kaynak göstererek cevap verir; Ollama'daki mevcut model listede görünür ve çalışır.
 
+**Durum (2026-07-19):** Adım 1, 3, 4 tamamlandı ve RTX 5090'da canlı doğrulandı
+(llama.cpp + GGUF, token streaming, kalıcı sohbet geçmişi, Sohbet UI paneli —
+commit `2c5eb11`). **Ertelenen kalanlar** (kullanıcı isteğiyle bilinçli olarak
+bu fazın sonuna bırakıldı, ileride "Faz 6 kalanları" olarak sürdürülecek):
+- Adım 2: Transformers backend (safetensors LLM'ler), opsiyonel vLLM, Ollama köprüsü
+- Adım 5: Embedding servisi (bge/gte/nomic-embed)
+- Adım 6: Vektör deposu (sqlite-vec/LanceDB)
+- Adım 7: RAG pipeline (belge ingest, chunking, retriever, kaynak gösterimi)
+- Adım 8: Tool-use temeli (function-calling — Faz 11 agent'larının ön koşulu)
+
+DoD'nin "100 PDF'lik korpusa kaynak göstererek cevap verir" ve "Ollama'daki
+model listede görünür" maddeleri bu yüzden henüz karşılanmadı — RAG/Ollama
+köprüsü tamamlanınca geçerli olacak.
+
 ---
 
 ### FAZ 7 — Ses: STT, TTS, Müzik (4–6 hafta)
@@ -296,6 +310,22 @@ Her fazda: **Amaç → Adımlar → Çıktılar → Kabul Kriterleri (DoD)**. Te
 6. **Ses UI:** kayıt, dalga formu, oynatıcı, kırpma; çıktılar WAV/FLAC/MP3.
 
 **DoD:** 10 dk'lık ses referans GPU'da gerçek zamanın altında transkribe edilir; 20 sn örnekten klonlanan sesle cümle sentezlenir; 30 sn müzik klibi üretilir.
+
+**Durum (2026-07-19):** Adım 1 (yalnız faster-whisper — WhisperX/Parakeet
+ertelendi), 2 (dosya transkripsiyonu + mikrofon kaydı + srt/vtt/json; toplu
+klasör transkripsiyonu ertelendi), 3 (yalnız Kokoro — XTTS-v2/F5-TTS/CosyVoice/
+Bark ertelendi), 6 tamamlandı ve RTX 5090'da canlı doğrulandı (TTS→STT
+round-trip birebir eşleşti). **Ertelenen kalanlar:**
+- Adım 1 kalan: WhisperX (kelime hizalama + diarization), Parakeet (NeMo)
+- Adım 2 kalan: toplu klasör transkripsiyonu
+- Adım 3 kalan: XTTS-v2 (ses klonlama), F5-TTS, CosyVoice, Bark, ses profili yönetimi
+- Adım 4: ses klonlamada etik onay akışı (klonlama eklenince gerekli)
+- Adım 5: müzik/ses üretimi (MusicGen, Stable Audio Open)
+
+Bilinen sınır: Kokoro'nun varsayılan sesleri yalnızca İngilizce fonemleştirme
+yapıyor — Türkçe metin İngilizce okunuş kurallarıyla telaffuz ediliyor (bkz.
+docs/worker-envs.md). Ses klonlama (XTTS-v2 vb.) eklenince çok dilli/Türkçe
+seslendirme de mümkün olacak.
 
 ---
 

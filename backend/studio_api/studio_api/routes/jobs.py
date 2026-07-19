@@ -96,6 +96,11 @@ def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
         settings.ensure_dirs()
         ext = "png" if params.get("op") in _IMGTOOL_IMAGE_OPS else "json"
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+    elif kind == "audio" and not params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        ext = "wav" if params.get("op") == "tts" else "json"
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
     with session_scope() as session:
         job = Job(
             kind=kind,
