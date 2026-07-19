@@ -313,19 +313,28 @@ köprüsü tamamlanınca geçerli olacak.
 
 **Durum (2026-07-19):** Adım 1 (yalnız faster-whisper — WhisperX/Parakeet
 ertelendi), 2 (dosya transkripsiyonu + mikrofon kaydı + srt/vtt/json; toplu
-klasör transkripsiyonu ertelendi), 3 (yalnız Kokoro — XTTS-v2/F5-TTS/CosyVoice/
-Bark ertelendi), 6 tamamlandı ve RTX 5090'da canlı doğrulandı (TTS→STT
-round-trip birebir eşleşti). **Ertelenen kalanlar:**
+klasör transkripsiyonu ertelendi), 3 (Kokoro + **XTTS-v2 ses klonlama, çok
+dilli — F5-TTS/CosyVoice/Bark ve kayıtlı klon profili yönetimi ertelendi**),
+4 (etik onay akışı — UI'da zorunlu onay kutusu + backend `consent` guard'ı),
+6 tamamlandı ve RTX 5090'da canlı doğrulandı: Kokoro TTS→STT round-trip
+birebir eşleşti; XTTS-v2 ile Türkçe metin + referans sesten klonlanmış Türkçe
+konuşma üretildi (model yükleme 9.4sn, sentez 3.1sn), faster-whisper
+`language=tr` ile geri transkribe edilip dil algılama %100 "tr" doğrulandı.
+**Ertelenen kalanlar:**
 - Adım 1 kalan: WhisperX (kelime hizalama + diarization), Parakeet (NeMo)
 - Adım 2 kalan: toplu klasör transkripsiyonu
-- Adım 3 kalan: XTTS-v2 (ses klonlama), F5-TTS, CosyVoice, Bark, ses profili yönetimi
-- Adım 4: ses klonlamada etik onay akışı (klonlama eklenince gerekli)
+- Adım 3 kalan: F5-TTS, CosyVoice, Bark, kayıtlı ses klon profili yönetimi
 - Adım 5: müzik/ses üretimi (MusicGen, Stable Audio Open)
 
 Bilinen sınır: Kokoro'nun varsayılan sesleri yalnızca İngilizce fonemleştirme
 yapıyor — Türkçe metin İngilizce okunuş kurallarıyla telaffuz ediliyor (bkz.
-docs/worker-envs.md). Ses klonlama (XTTS-v2 vb.) eklenince çok dilli/Türkçe
-seslendirme de mümkün olacak.
+docs/worker-envs.md). **Çözüldü:** XTTS-v2 motoru (Ses panelinde seçilebilir)
+çok dilli/Türkçe seslendirmeyi ve ses klonlamayı sağlıyor. **Lisans notu:**
+XTTS-v2 model ağırlıkları Coqui Public Model License (CPML) ile geliyor —
+yalnızca ticari olmayan kullanım; bu UI'da XTTS motoru seçilince kullanıcıya
+gösteriliyor. XTTS-v2 kurulumu ayrıca sistemde bulunmayan bir FFmpeg paylaşımlı
+kütüphane bağımlılığı (torchcodec üzerinden) ortaya çıkardı — çözümü ve tam
+bağımlılık zinciri docs/worker-envs.md'de belgelendi.
 
 ---
 

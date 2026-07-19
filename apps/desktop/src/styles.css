@@ -262,6 +262,11 @@ table.models th { color: var(--muted); font-weight: 600; }
 
 /* Ses paneli (Faz 7) */
 .recording { background: var(--err); color: #fff; border-color: var(--err); }
+.consent-row {
+  align-items: flex-start; cursor: pointer; font-size: 12px; color: var(--text);
+}
+.consent-row input[type="checkbox"] { flex: 0 0 auto; margin-top: 2px; }
+.consent-row span { flex: 1; }
 .audio-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
 .audio-result-card {
   border: 1px solid var(--border); border-radius: 8px; padding: 10px;

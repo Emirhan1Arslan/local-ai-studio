@@ -1,13 +1,23 @@
-"""Ses adapter'ı (Faz 7): STT (faster-whisper) + TTS (Kokoro).
+"""Ses adapter'ı (Faz 7): STT (faster-whisper) + TTS (Kokoro veya XTTS-v2).
 
 DİKKAT: Bu modül worker env'inde (envs/audio) çalışır. 3.11+ sözdizimi KULLANMA.
-faster_whisper/kokoro/torch importları metod içindedir; API süreci bu modülü
-hiç yüklemez.
+faster_whisper/kokoro/TTS/torch importları metod içindedir; API süreci bu
+modülü hiç yüklemez.
 
 Windows/RTX 5090 notu: ctranslate2 (faster-whisper'ın çalışma zamanı) ve
 kokoro (torch tabanlı) hazır wheel'lerle kuruldu, CUDA'yı llama.cpp'nin
 aksine EK BİR PATH düzeltmesi gerekmeden otomatik buldu (kendi CUDA çalışma
 zamanı DLL'lerini taşıyorlar) — canlıda doğrulandı.
+
+XTTS-v2 (coqui-tts) için torchcodec, FFmpeg'in paylaşımlı DLL'lerini (avcodec/
+avformat/avutil...) çalışma zamanında arıyor; sistemde kurulu olmadığından
+`~/LocalAIStudio/tools/ffmpeg/bin` altına elle indirildi (bkz. docs/worker-envs.md)
+— `_ensure_ffmpeg_on_path()` bu dizini llm.py'deki torch-DLL çözümüyle aynı
+desenle gerçek PATH'e ekliyor.
+
+**LİSANS UYARISI:** XTTS-v2 model ağırlıkları Coqui Public Model License
+(CPML) ile geliyor — yalnızca ticari OLMAYAN kullanım. UI, xtts motorunu
+seçmeden önce bunu kullanıcıya açıkça göstermeli.
 
 params:
 - op: stt | tts (zorunlu)
@@ -16,20 +26,27 @@ stt:
 - audio_path: ses dosyası (zorunlu)
 - model_size: tiny|base|small|medium|large-v3 (vars. "base") ya da Model
   Browser'dan kayıtlı bir CTranslate2 model klasörü yolu
-- language: dil kodu (vars. otomatik algıla) · task: transcribe|translate (vars. transcribe)
+- language: dil kodu (vars. otomatik algıla, "tr" dahil çok dilli destek) ·
+  task: transcribe|translate (vars. transcribe)
 - çıktı: json (segment+zaman damgası) + txt + srt + vtt
 
 tts:
 - text: seslendirilecek metin (zorunlu)
-- voice: Kokoro ses profili (vars. "af_heart") · lang_code: vars. "a" (Amerikan İngilizcesi)
-- speed: 0.5-2.0 (vars. 1.0)
-- çıktı: WAV (24kHz)
+- engine: kokoro (vars.) | xtts
+- kokoro: voice (vars. "af_heart") · lang_code (vars. "a", Amerikan İngilizcesi)
+- xtts: speaker_wav (klonlanacak referans ses, zorunlu) · language (vars. "en";
+  tr dahil ~17 dil) · consent (zorunlu, true olmalı — sesin sahibinden izin
+  alındığının beyanı, plan.md etik onay şartı)
+- speed: 0.5-2.0 (vars. 1.0, yalnızca kokoro)
+- çıktı: WAV (24kHz kokoro / 24kHz xtts)
 """
 
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 
@@ -38,6 +55,18 @@ def _import_error(hint: str, exc: ImportError) -> RuntimeError:
         f"audio worker ortamı eksik ({hint}). "
         "Kurulum reçetesi: docs/worker-envs.md  |  " + str(exc)
     )
+
+
+def _ensure_ffmpeg_on_path() -> None:
+    """torchcodec'in (XTTS-v2/torch>=2.9 için) aradığı FFmpeg paylaşımlı
+    DLL'lerini bulabilmesi için elle indirilen build'i gerçek PATH'e ekler."""
+    data_dir = Path(os.environ.get("STUDIO_DATA_DIR") or (Path.home() / "LocalAIStudio"))
+    ffmpeg_bin = data_dir / "tools" / "ffmpeg" / "bin"
+    if not ffmpeg_bin.is_dir():
+        return
+    path = os.environ.get("PATH", "")
+    if str(ffmpeg_bin) not in path:
+        os.environ["PATH"] = str(ffmpeg_bin) + os.pathsep + path
 
 
 def _fmt_ts_srt(seconds: float) -> str:
@@ -71,7 +100,8 @@ def _make_vtt(segments: list[dict]) -> str:
 
 class AudioAdapter:
     def __init__(self) -> None:
-        self._cache: dict[str, Any] = {}  # "stt:model_size" / "tts:lang_code" -> yüklü nesne
+        # anahtar: "stt:model_size" / "tts:lang_code" / "tts:xtts" -> yüklü nesne
+        self._cache: dict[str, Any] = {}
 
     def load(self, model_path: str, **kwargs: Any) -> None:
         pass  # her op kendi modelini infer() içinde tembel yükler + cache'ler
@@ -197,6 +227,15 @@ class AudioAdapter:
         if not output_path:
             raise RuntimeError("output_path gerekli")
 
+        engine = params.get("engine") or "kokoro"
+        if engine == "kokoro":
+            yield from self._tts_kokoro(params, text, output_path)
+        elif engine == "xtts":
+            yield from self._tts_xtts(params, text, output_path)
+        else:
+            raise RuntimeError(f"bilinmeyen engine: {engine!r} (kokoro|xtts)")
+
+    def _tts_kokoro(self, params: dict, text: str, output_path: str) -> Iterator[dict]:
         lang_code = params.get("lang_code") or "a"
         voice = params.get("voice") or "af_heart"
         speed = float(params.get("speed", 1.0))
@@ -219,7 +258,74 @@ class AudioAdapter:
         duration = len(full_audio) / 24000
         yield {
             "event": "done",
-            "result": {"path": output_path, "op": "tts", "duration": duration, "voice": voice},
+            "result": {
+                "path": output_path,
+                "op": "tts",
+                "engine": "kokoro",
+                "duration": duration,
+                "voice": voice,
+            },
+        }
+
+    # -- TTS (XTTS-v2 — ses klonlama, çok dilli) ------------------------------
+
+    def _get_xtts(self):
+        key = "tts:xtts"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            # Etkileşimsiz kabul: lisans metni kullanıcıya UI'da ayrıca gösterilir
+            # (CPML — ticari olmayan kullanım); worker sürecinde prompt olamaz.
+            os.environ.setdefault("COQUI_TOS_AGREED", "1")
+            _ensure_ffmpeg_on_path()
+            import torch
+            from TTS.api import TTS
+        except ImportError as exc:
+            raise _import_error("coqui-tts (TTS.api) bulunamadı", exc) from exc
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        self._cache[key] = tts
+        return tts
+
+    def _tts_xtts(self, params: dict, text: str, output_path: str) -> Iterator[dict]:
+        speaker_wav = params.get("speaker_wav", "")
+        if not speaker_wav:
+            raise RuntimeError(
+                "speaker_wav gerekli: xtts motoru klonlanacak bir referans ses dosyası ister"
+            )
+        if not params.get("consent"):
+            raise RuntimeError(
+                "consent=true gerekli: ses klonlama yalnızca, seslendirilecek sesin "
+                "sahibinden izin alındığını beyan ettiğinizde çalışır (bkz. plan.md "
+                "etik onay şartı)."
+            )
+        language = params.get("language") or "en"
+
+        yield {"event": "progress", "value": 0.1, "message": "XTTS-v2 model yükleniyor…"}
+        tts = self._get_xtts()
+
+        yield {"event": "progress", "value": 0.4, "message": "ses klonlanıyor…"}
+        tts.tts_to_file(
+            text=text,
+            speaker_wav=speaker_wav,
+            language=language,
+            file_path=output_path,
+        )
+
+        import soundfile as sf
+
+        duration = float(sf.info(output_path).duration)
+        yield {
+            "event": "done",
+            "result": {
+                "path": output_path,
+                "op": "tts",
+                "engine": "xtts",
+                "duration": duration,
+                "language": language,
+            },
         }
 
     def unload(self) -> None:
@@ -233,4 +339,6 @@ class AudioAdapter:
             pass
 
     def vram_estimate(self, params: dict) -> int:
+        if params.get("op") == "tts" and params.get("engine") == "xtts":
+            return 4000
         return {"stt": 3000, "tts": 2000}.get(params.get("op", ""), 1000)

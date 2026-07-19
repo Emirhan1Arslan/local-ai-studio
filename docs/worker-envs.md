@@ -159,4 +159,65 @@ aksine, o dışarıdan cudart/cublas bekliyordu).
   seslendirilirse harfler İngilizce okunuş kurallarıyla telaffuz edilir
   (canlı testte yakalandı: "hoş geldiniz" → "Hosh Geldon is" gibi duyuluyor).
   Bu bir kod hatası değil, model kapsamı sınırı — Kokoro v1.0 sınırlı sayıda
-  ek dil (ja/zh/es/fr/hi/it/pt) destekliyor, Türkçe şimdilik yok.
+  ek dil (ja/zh/es/fr/hi/it/pt) destekliyor, Türkçe şimdilik yok. Çok dilli/
+  Türkçe ihtiyaç için aşağıdaki XTTS-v2 motoru kullanılır.
+
+### XTTS-v2 (ses klonlama, çok dilli — Türkçe dahil)
+
+```bash
+uv pip install --python ~/LocalAIStudio/envs/audio/Scripts/python.exe \
+  --no-deps coqui-tts
+uv pip install --python ~/LocalAIStudio/envs/audio/Scripts/python.exe \
+  --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python ~/LocalAIStudio/envs/audio/Scripts/python.exe \
+  --no-deps "transformers==4.57.6" "huggingface-hub==0.36.2"
+uv pip install --python ~/LocalAIStudio/envs/audio/Scripts/python.exe \
+  --no-deps torchcodec
+```
+
+**Neden bu kadar çok `--no-deps` + pin var** (sürüm cehennemi, bu kez `envs/audio`'da):
+- Sistemde torch var (2.11.0+cu128) ama **torchaudio hiç yok** — coqui-tts
+  onu import ediyor. PyPI'daki torchaudio, pip'in serbest çözümüyle uyuşmayan
+  bir sürüm çekebileceği için doğrudan torch ile birebir eşleşen sürüm
+  (`2.11.0+cu128`) PyTorch'un kendi cu128 wheel index'inden `--no-deps` ile
+  kuruldu.
+- `coqui-tts`'in taban bağımlılığı `transformers>=4.57` — pin'siz kurulum en
+  yeni sürümü (`5.14.1`, büyük major sürüm) çekiyor; ama XTTS'in tortoise
+  katmanı (`TTS/tts/layers/tortoise/autoregressive.py`) transformers 5.x'te
+  kaldırılmış bir fonksiyonu (`isin_mps_friendly`) import ediyor →
+  `ImportError`. Çözüm: son 4.x sürümüne (`4.57.6`) sabitlemek — coqui-tts'in
+  kendi `>=4.57` şartını hâlâ karşılıyor.
+- `transformers==4.57.6` ise `huggingface-hub>=0.34.0,<1.0` istiyor; coqui-tts
+  kurulumunun çektiği `hub 1.24.0` bunu bozuyor → son 0.x sürümüne
+  (`0.36.2`) indirildi.
+- torch 2.9+ için coqui-tts, ses I/O'sunu `torchcodec` üzerinden yapıyor;
+  paket PyPI'da normal `pip install` ile geliyor ama **FFmpeg'in paylaşımlı
+  DLL'lerini** (avcodec/avformat/avutil…) çalışma zamanında arıyor — bunlar
+  Python paketi değil, ayrı bir sistem aracı.
+
+**FFmpeg (sistem aracı, Python/torch'a dokunmaz):** Bu makinede winget
+kabuktan görünmediği için (bkz. üstteki ortam notu) BtbN'nin FFmpeg 7.1
+"shared" build'i (DLL'ler ayrı, GPL) doğrudan indirilip
+`~/LocalAIStudio/tools/ffmpeg/` altına açıldı — torchcodec 0.15.0'ın aradığı
+`libtorchcodec_core7.dll` FFmpeg 7.x ABI'siyle eşleşiyor. `adapters/audio.py`
+içindeki `_ensure_ffmpeg_on_path()`, `tools/ffmpeg/bin`'i (varsa) gerçek
+`PATH`'e ekliyor — llm.py'nin torch-DLL çözümüyle birebir aynı desen
+(`os.add_dll_directory` değil, gerçek `PATH`; winmode farkı nedeniyle).
+
+Tüm zincir doğrulandı: `torch.__file__` hâlâ sistem yolunu gösteriyor (pip
+her defasında sistem kopyasını "outside environment" diyerek reddetti, yalnız
+venv'e shadow kurdu); Kokoro ve faster-whisper regresyon testleri bu
+değişikliklerden sonra da temiz geçti.
+
+- `engine=xtts` params: `speaker_wav` (klonlanacak referans ses, zorunlu),
+  `language` (vars. "en" — tr dahil ~17 dil), `consent` (zorunlu `true` —
+  UI'da bir onay kutusuyla toplanır, plan.md Faz 7 adım 4).
+- **LİSANS:** XTTS-v2 model ağırlıkları **Coqui Public Model License
+  (CPML)** ile geliyor — yalnızca ticari OLMAYAN kullanım. `COQUI_TOS_AGREED=1`
+  adapter içinde otomatik ayarlanır (worker sürecinde etkileşimli prompt
+  mümkün değil); lisans metni kullanıcıya UI'da (Ses paneli, XTTS motoru
+  seçilince) ayrıca gösterilir.
+- Canlı doğrulama (RTX 5090): Türkçe metin + İngilizce referans ses →
+  klonlanmış Türkçe konuşma (model yükleme 9.4sn, sentez 3.1sn) →
+  faster-whisper `language=tr` ile geri transkribe edildi, dil algılama
+  %100 güvenle "tr", metin kaynağa yakın eşleşti (round-trip doğrulandı).

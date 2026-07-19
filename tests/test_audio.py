@@ -67,6 +67,44 @@ def test_audio_job_fails_gracefully_without_env(client):
     assert "worker ortamı eksik" in d["error"] or "kokoro" in d["error"]
 
 
+def test_tts_unknown_engine_fails(client):
+    r = client.post(
+        "/v1/jobs",
+        json={"kind": "audio", "params": {"op": "tts", "text": "merhaba", "engine": "yok"}},
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "bilinmeyen engine" in d["error"]
+
+
+def test_xtts_requires_speaker_wav(client):
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {"op": "tts", "engine": "xtts", "text": "merhaba", "consent": True},
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "speaker_wav" in d["error"]
+
+
+def test_xtts_requires_consent(client):
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "audio",
+            "params": {
+                "op": "tts",
+                "engine": "xtts",
+                "text": "merhaba",
+                "speaker_wav": "ref.wav",
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "consent" in d["error"]
+
+
 def test_make_srt_and_vtt_formatting():
     from studio_inference.adapters.audio import _make_srt, _make_vtt
 

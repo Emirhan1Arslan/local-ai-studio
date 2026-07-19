@@ -11,6 +11,7 @@ import {
 import { useStudio } from "../state";
 
 type Mode = "stt" | "tts";
+type Engine = "kokoro" | "xtts";
 
 const VOICES: [string, string][] = [
   ["af_heart", "Heart (kadın, A. İngilizcesi)"],
@@ -20,6 +21,27 @@ const VOICES: [string, string][] = [
   ["am_michael", "Michael (erkek, A. İngilizcesi)"],
   ["bf_emma", "Emma (kadın, B. İngilizcesi)"],
   ["bm_george", "George (erkek, B. İngilizcesi)"],
+];
+
+// XTTS-v2'nin desteklediği diller (coqui-tts multilingual/multi-dataset/xtts_v2)
+const XTTS_LANGUAGES: [string, string][] = [
+  ["tr", "Türkçe"],
+  ["en", "İngilizce"],
+  ["de", "Almanca"],
+  ["fr", "Fransızca"],
+  ["es", "İspanyolca"],
+  ["it", "İtalyanca"],
+  ["pt", "Portekizce"],
+  ["pl", "Lehçe"],
+  ["ru", "Rusça"],
+  ["nl", "Felemenkçe"],
+  ["cs", "Çekçe"],
+  ["ar", "Arapça"],
+  ["zh-cn", "Çince (basitleştirilmiş)"],
+  ["ja", "Japonca"],
+  ["hu", "Macarca"],
+  ["ko", "Korece"],
+  ["hi", "Hintçe"],
 ];
 
 function outUrl(path: string): string {
@@ -40,8 +62,12 @@ export default function AudioPanel() {
 
   // TTS
   const [text, setText] = useState("");
+  const [engine, setEngine] = useState<Engine>("kokoro");
   const [voice, setVoice] = useState("af_heart");
   const [speed, setSpeed] = useState(1.0);
+  const [speakerFile, setSpeakerFile] = useState<{ path: string; name: string } | null>(null);
+  const [xttsLanguage, setXttsLanguage] = useState("tr");
+  const [consent, setConsent] = useState(false);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -89,6 +115,16 @@ export default function AudioPanel() {
     try {
       const up = await uploadAudioFile(file);
       setAudioFile({ path: up.path, name: file.name });
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const pickSpeakerFile = async (file: File) => {
+    setFormError("");
+    try {
+      const up = await uploadAudioFile(file);
+      setSpeakerFile({ path: up.path, name: file.name });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     }
@@ -147,9 +183,24 @@ export default function AudioPanel() {
         return;
       }
       params.text = text.trim();
-      params.voice = voice;
-      params.lang_code = voice.startsWith("b") ? "b" : "a";
-      params.speed = speed;
+      params.engine = engine;
+      if (engine === "kokoro") {
+        params.voice = voice;
+        params.lang_code = voice.startsWith("b") ? "b" : "a";
+        params.speed = speed;
+      } else {
+        if (!speakerFile) {
+          setFormError("klonlanacak bir referans ses dosyası yükleyin");
+          return;
+        }
+        if (!consent) {
+          setFormError("devam etmeden önce ses klonlama onayını işaretleyin");
+          return;
+        }
+        params.speaker_wav = speakerFile.path;
+        params.language = xttsLanguage;
+        params.consent = true;
+      }
     }
     try {
       await createJob("audio", params);
@@ -227,26 +278,90 @@ export default function AudioPanel() {
               onChange={(e) => setText(e.target.value)}
               rows={3}
             />
-            <div className="dl-row">
-              <select value={voice} onChange={(e) => setVoice(e.target.value)}>
-                {VOICES.map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <label className="gen-num">
-                hız{" "}
-                <input
-                  type="number"
-                  min={0.5}
-                  max={2}
-                  step={0.1}
-                  value={speed}
-                  onChange={(e) => setSpeed(Number(e.target.value))}
-                />
-              </label>
+            <div className="mode-tabs">
+              <button
+                type="button"
+                className={engine === "kokoro" ? "active" : ""}
+                onClick={() => setEngine("kokoro")}
+              >
+                Kokoro (hazır sesler)
+              </button>
+              <button
+                type="button"
+                className={engine === "xtts" ? "active" : ""}
+                onClick={() => setEngine("xtts")}
+              >
+                XTTS-v2 (ses klonlama, çok dilli)
+              </button>
             </div>
+
+            {engine === "kokoro" && (
+              <div className="dl-row">
+                <select value={voice} onChange={(e) => setVoice(e.target.value)}>
+                  {VOICES.map(([v, label]) => (
+                    <option key={v} value={v}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <label className="gen-num">
+                  hız{" "}
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    value={speed}
+                    onChange={(e) => setSpeed(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            )}
+
+            {engine === "xtts" && (
+              <>
+                <p className="muted">
+                  XTTS-v2 model ağırlıkları <strong>Coqui Public Model License (CPML)</strong>{" "}
+                  ile dağıtılır — yalnızca ticari OLMAYAN kullanım içindir.
+                </p>
+                <div className="dl-row">
+                  <label className="file-pick">
+                    referans ses yükle (klonlanacak ses)…
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      onChange={(e) => e.target.files?.[0] && pickSpeakerFile(e.target.files[0])}
+                    />
+                  </label>
+                  {speakerFile && <span className="muted">{speakerFile.name}</span>}
+                  {speakerFile && (
+                    <button type="button" onClick={() => setSpeakerFile(null)}>
+                      kaldır
+                    </button>
+                  )}
+                </div>
+                <div className="dl-row">
+                  <select value={xttsLanguage} onChange={(e) => setXttsLanguage(e.target.value)}>
+                    {XTTS_LANGUAGES.map(([code, label]) => (
+                      <option key={code} value={code}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="dl-row consent-row">
+                  <input
+                    type="checkbox"
+                    checked={consent}
+                    onChange={(e) => setConsent(e.target.checked)}
+                  />
+                  <span>
+                    Yüklediğim referans sesin sahibi olduğumu veya sesini klonlamak için
+                    sahibinden açık izin aldığımı beyan ederim.
+                  </span>
+                </label>
+              </>
+            )}
           </>
         )}
 
@@ -278,11 +393,13 @@ export default function AudioPanel() {
         {results.map((a) => {
           const resultOp = String(a.meta.params?.op ?? "");
           const isTts = resultOp === "tts";
+          const resultEngine = String(a.meta.params?.engine ?? "kokoro");
           const transcript = String(a.meta.result?.text ?? "");
           return (
             <div className="audio-result-card" key={a.id}>
               {isTts ? (
                 <>
+                  {resultEngine === "xtts" && <span className="fmt">XTTS-v2 klon</span>}
                   <audio controls src={outUrl(a.path)} />
                   <p className="muted">"{String(a.meta.params?.text ?? "").slice(0, 120)}"</p>
                 </>
