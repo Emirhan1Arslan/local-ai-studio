@@ -45,7 +45,7 @@ def test_worker_python_fallback_no_env(client):
 
 
 def test_imgtool_output_path_image_ops(client):
-    for op in ("bg_remove", "upscale", "segment", "crop", "adjust"):
+    for op in ("bg_remove", "upscale", "segment", "crop", "adjust", "face_restore"):
         r = client.post(
             "/v1/jobs", json={"kind": "imgtool", "params": {"op": op, "image_path": "x.png"}}
         )
@@ -81,6 +81,15 @@ def test_imgtool_job_requires_known_op(client):
     )
     d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
     assert "bilinmeyen op" in d["error"]
+
+
+def test_face_restore_requires_model_path(client):
+    r = client.post(
+        "/v1/jobs",
+        json={"kind": "imgtool", "params": {"op": "face_restore", "image_path": "x.png"}},
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "model_path" in d["error"]
 
 
 def test_segment_requires_known_mode(client):

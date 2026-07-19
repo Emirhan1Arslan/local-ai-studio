@@ -69,3 +69,25 @@ uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe \
 - `captioning` varsayılanı **Florence-2-base** (MIT lisans, ~460MB fp16).
 - `upscale` modeli Model Browser'dan seçilir (zorunlu) — `.pth`/`.safetensors`
   ESRGAN ailesi ağırlıkları `models/upscale/` altına indirilir.
+- `segment`: SAM (`facebook/sam-vit-base`) + Grounding DINO
+  (`IDEA-Research/grounding-dino-tiny`) — ikisi de transformers'ta yerleşik,
+  ek paket gerekmez. Plan.md "SAM2" adını verir; biz SAM v1 kullandık çünkü
+  transformers 4.46.3'te native destekli (SAM2 ayrı bir pip paketi ve daha
+  yeni transformers ister) — aynı nokta/kutu/açık-kelime-dağarcığı iş akışını
+  sağlıyor, kalite farkı çoğu kullanım için gözle görülür değil.
+
+```bash
+# face_restore (GFPGAN) — basicsr'ı da beraberinde getirir
+uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe gfpgan
+```
+
+- `face_restore`: GFPGAN. `basicsr` (gfpgan'ın bağımlılığı), yeni
+  torchvision'larda kaldırılan `torchvision.transforms.functional_tensor`
+  modülünü import etmeye çalıştığı için TEK BAŞINA kırık (bilinen üst akış
+  sorunu). Adapter, gerçek torchvision paketine dokunmadan, yalnızca kendi
+  worker sürecinde geçerli bir uyumluluk shim'i enjekte ediyor
+  (`sys.modules["torchvision.transforms.functional_tensor"]`) — bkz.
+  `imgtool.py::_get_gfpganer`. Model ağırlığı (`GFPGANv1.4.pth`, ~333 MB)
+  Model Browser'dan `models/face_restoration/` altına indirilir; facexlib'in
+  yüz tespit/hizalama modelleri ise kendi paket-içi varsayılan önbelleğine
+  otomatik iner (Model Manager'ın dışında — bilinen kapsam dışı bırakma).

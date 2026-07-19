@@ -12,7 +12,15 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-type Op = "bg_remove" | "upscale" | "caption" | "ocr" | "segment" | "crop" | "adjust";
+type Op =
+  | "bg_remove"
+  | "upscale"
+  | "caption"
+  | "ocr"
+  | "segment"
+  | "crop"
+  | "adjust"
+  | "face_restore";
 type SegMode = "point" | "box" | "text";
 
 const OP_LABELS: Record<Op, string> = {
@@ -23,9 +31,17 @@ const OP_LABELS: Record<Op, string> = {
   segment: "segmentle",
   crop: "kırp",
   adjust: "ayarla",
+  face_restore: "yüz onar",
 };
 
-const IMAGE_OPS = new Set<string>(["bg_remove", "upscale", "segment", "crop", "adjust"]);
+const IMAGE_OPS = new Set<string>([
+  "bg_remove",
+  "upscale",
+  "segment",
+  "crop",
+  "adjust",
+  "face_restore",
+]);
 const ADJUST_KEYS = ["brightness", "contrast", "saturation", "sharpness"] as const;
 const ADJUST_LABELS: Record<(typeof ADJUST_KEYS)[number], string> = {
   brightness: "parlaklık",
@@ -166,6 +182,9 @@ export default function ToolsPanel() {
   const [sourceCandidates, setSourceCandidates] = useState<AssetInfo[]>([]);
   const [upscaleModels, setUpscaleModels] = useState<ModelInfo[]>([]);
   const [upscaleModel, setUpscaleModel] = useState("");
+  const [faceModels, setFaceModels] = useState<ModelInfo[]>([]);
+  const [faceModel, setFaceModel] = useState("");
+  const [faceWeight, setFaceWeight] = useState(0.5);
   const [bgModel, setBgModel] = useState("");
   const [captionModel, setCaptionModel] = useState("");
   const [captionTask, setCaptionTask] = useState("short");
@@ -199,6 +218,7 @@ export default function ToolsPanel() {
   useEffect(() => {
     if (!connected) return;
     fetchModels("upscale").then(setUpscaleModels).catch(() => setUpscaleModels([]));
+    fetchModels("face_restoration").then(setFaceModels).catch(() => setFaceModels([]));
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
@@ -299,6 +319,14 @@ export default function ToolsPanel() {
       for (const [k, v] of Object.entries(adjustVals)) {
         if (v !== 1) params[k] = v;
       }
+    }
+    if (op === "face_restore") {
+      if (!faceModel) {
+        setFormError("face_restore için Model Browser'dan bir GFPGAN modeli seçin");
+        return;
+      }
+      params.model_path = faceModel;
+      params.weight = faceWeight;
     }
     try {
       await createJob("imgtool", params);
@@ -450,6 +478,33 @@ export default function ToolsPanel() {
           </>
         )}
         {op === "crop" && source && <BoxPicker src={source.url} box={cropBox} onChange={setCropBox} />}
+        {op === "face_restore" && (
+          <div className="dl-row">
+            <select value={faceModel} onChange={(e) => setFaceModel(e.target.value)}>
+              <option value="" disabled>
+                {faceModels.length === 0
+                  ? "GFPGAN modeli bulunamadı — İndirmeler panelinden indirin"
+                  : "model seç"}
+              </option>
+              {faceModels.map((m) => (
+                <option key={m.id} value={m.path}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <label className="gen-num">
+              güç{" "}
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={faceWeight}
+                onChange={(e) => setFaceWeight(Number(e.target.value))}
+              />
+            </label>
+          </div>
+        )}
         {op === "adjust" && (
           <div className="dl-row">
             {ADJUST_KEYS.map((k) => (

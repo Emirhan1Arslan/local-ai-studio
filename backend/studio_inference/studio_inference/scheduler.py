@@ -213,6 +213,7 @@ class Scheduler:
             os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
         )
         child_env["PYTHONIOENCODING"] = "utf-8"
+        settings = get_settings()
         proc = await asyncio.create_subprocess_exec(
             worker_python(kind),
             "-u",
@@ -226,6 +227,11 @@ class Scheduler:
             # yazarsa (newline'sız uzun satır) "Separator is not found" ile patlar
             # (canlıda EasyOCR'ın ilk indirmesinde yakalandı) — savunma amaçlı büyütüldü.
             limit=4 * 1024 * 1024,
+            # Bazı kütüphaneler (gfpgan/facexlib) göreli yol varsayılanlarıyla model
+            # indirir; ana süreç (uv run) repo kökünde çalıştığından o kök kirlenirdi
+            # (canlıda yakalandı: <repo>/gfpgan/weights/). Worker'ın cwd'sini yönetilen
+            # cache dizinine sabitleyip bu tür yan etkileri oraya hapsediyoruz.
+            cwd=str(settings.cache_dir),
         )
         handle = _WorkerHandle(kind, proc)
         handle.last_used = asyncio.get_running_loop().time()

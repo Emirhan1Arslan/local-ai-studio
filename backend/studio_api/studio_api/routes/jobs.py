@@ -82,7 +82,7 @@ async def create_jobs_batch(req: BatchJobRequest) -> list[JobOut]:
 
 
 # imgtool op'ları görsel (PNG) ya da yapılandırılmış metin (JSON) üretir
-_IMGTOOL_IMAGE_OPS = {"bg_remove", "upscale", "segment", "crop", "adjust"}
+_IMGTOOL_IMAGE_OPS = {"bg_remove", "upscale", "segment", "crop", "adjust", "face_restore"}
 
 
 def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:

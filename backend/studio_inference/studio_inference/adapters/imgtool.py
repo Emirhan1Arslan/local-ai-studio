@@ -25,6 +25,8 @@ params:
   - varsayılan modeller: facebook/sam-vit-base, IDEA-Research/grounding-dino-tiny
 - crop box: [x1,y1,x2,y2] (zorunlu)
 - adjust: brightness/contrast/saturation/sharpness (0'dan büyük çarpanlar, 1.0=değişiklik yok)
+- face_restore: model_path ZORUNLU (Model Browser'dan bir GFPGAN .pth),
+  weight (vars. 0.5, 0=orijinale yakın·1=tam restorasyon), only_center_face (vars. false)
 """
 
 from __future__ import annotations
@@ -100,12 +102,13 @@ class ImgToolAdapter:
             "segment": self._segment,
             "crop": self._crop,
             "adjust": self._adjust,
+            "face_restore": self._face_restore,
         }
         handler = handlers.get(op)
         if handler is None:
             raise RuntimeError(
                 f"bilinmeyen op: {op!r} "
-                "(bg_remove|upscale|caption|ocr|segment|crop|adjust)"
+                "(bg_remove|upscale|caption|ocr|segment|crop|adjust|face_restore)"
             )
         image_path = params.get("image_path", "")
         if not image_path:
@@ -551,6 +554,84 @@ class ImgToolAdapter:
             },
         }
 
+    # -- yüz restorasyonu (GFPGAN) -------------------------------------------
+
+    def _get_gfpganer(self, model_path: str):
+        key = f"face_restore:{model_path}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            import sys
+            import types
+
+            import torch
+            import torchvision.transforms.functional as _tvf
+
+            # basicsr, yeni torchvision'larda kaldırılan functional_tensor modülünü
+            # import etmeye çalışıyor (üst akışta bilinen, yaygın bir sorun). Gerçek
+            # torchvision paketine DOKUNMADAN, yalnızca bu worker sürecinde geçerli
+            # bir uyumluluk shim'i sağlanıyor — sistem kurulumunu etkilemez.
+            if "torchvision.transforms.functional_tensor" not in sys.modules:
+                shim = types.ModuleType("torchvision.transforms.functional_tensor")
+                shim.rgb_to_grayscale = _tvf.rgb_to_grayscale
+                sys.modules["torchvision.transforms.functional_tensor"] = shim
+            from gfpgan import GFPGANer
+        except ImportError as exc:
+            raise _import_error("gfpgan bulunamadı", exc) from exc
+
+        restorer = GFPGANer(
+            model_path=model_path,
+            upscale=1,  # yalnız yüz restorasyonu; büyütme ayrı 'upscale' op'unda
+            arch="clean",
+            channel_multiplier=2,
+            bg_upsampler=None,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+        )
+        self._cache[key] = restorer
+        return restorer
+
+    def _face_restore(self, params: dict, image_path: str, output_path: str) -> Iterator[dict]:
+        model_path = params.get("model_path", "")
+        if not model_path:
+            raise RuntimeError(
+                "face_restore için model_path gerekli (Model Browser'dan bir GFPGAN modeli seçin)"
+            )
+        yield {"event": "progress", "value": 0.1, "message": "model yükleniyor…"}
+        restorer = self._get_gfpganer(model_path)
+
+        import cv2
+        import numpy as np
+        from PIL import Image
+
+        image = Image.open(image_path).convert("RGB")
+        bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+        yield {"event": "progress", "value": 0.5, "message": "yüzler onarılıyor…"}
+        _cropped, restored_faces, restored_img = restorer.enhance(
+            bgr,
+            has_aligned=False,
+            only_center_face=bool(params.get("only_center_face", False)),
+            paste_back=True,
+            weight=float(params.get("weight", 0.5)),
+        )
+        if restored_img is None:
+            raise RuntimeError("görüntüde yüz bulunamadı")
+
+        out_rgb = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
+        Image.fromarray(out_rgb).save(output_path)
+
+        yield {
+            "event": "done",
+            "result": {
+                "path": output_path,
+                "op": "face_restore",
+                "face_count": len(restored_faces),
+                "width": int(restored_img.shape[1]),
+                "height": int(restored_img.shape[0]),
+            },
+        }
+
     def unload(self) -> None:
         self._cache = {}
         try:
@@ -571,4 +652,5 @@ class ImgToolAdapter:
             "segment": 2500,  # SAM + Grounding DINO ikisi de belleğe alınabilir
             "crop": 0,
             "adjust": 0,
+            "face_restore": 2000,
         }.get(op, 1000)
