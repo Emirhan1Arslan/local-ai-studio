@@ -17,20 +17,24 @@ import {
 import { useStudio } from "../state";
 
 // plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı), Stable
-// Fast 3D (dokulu/tekstürlü çıktı), OpenLRM (vertex-renkli, yüksek çözünürlük)
-// ve Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh) canlı doğrulandı ve
-// buraya bağlandı. InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de nvdiffrast'ın
-// RasterizeCudaContext'ini zorunlu kılıyor, bu makinede kurulu olmayan NVIDIA
-// CUDA Toolkit gerektiriyor. Hunyuan3D-2'nin texgen/paint (doku/boyama) kısmı
-// da aynı sebeple eklenMEDİ — custom_rasterizer_kernel de CPU'ya düşmeyen bir
-// CUDAExtension (ayrıntı: docs/worker-envs.md, vendor/hunyuan3d/NOTICE.md).
-type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d";
+// Fast 3D (dokulu/tekstürlü çıktı), OpenLRM (vertex-renkli, yüksek çözünürlük),
+// Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh) ve InstantMesh
+// (LRM+FlexiCubes, zero123plus çoklu-görünüm difüzyonu üzerine) canlı
+// doğrulandı ve buraya bağlandı. NVIDIA CUDA Toolkit 2026-07-20'de kuruldu
+// (bkz. docs/worker-envs.md) — bu, InstantMesh'i bloke eden nvdiffrast
+// engelini kaldırdı. TRELLIS/CRM henüz eklenMEDİ (adapter yazılmadı, artık
+// CUDA Toolkit engeli değil). Hunyuan3D-2'nin texgen/paint (doku/boyama)
+// kısmı ayrı, farklı bir engelle karşılaştı — upstream'in checkpoint'i
+// kendi yükleme kodunun oluşturmadığı IP-Adapter anahtarları içeriyor
+// (ayrıntı: vendor/hunyuan3d/NOTICE.md).
+type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d" | "instantmesh";
 
 const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
   { id: "sf3d", label: "Stable Fast 3D — dokulu/tekstürlü (~15sn)", modelNameHint: "stable-fast-3d" },
   { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
   { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh, dokusuz (~9sn)", modelNameHint: "hunyuan3d-dit" },
+  { id: "instantmesh", label: "InstantMesh — vertex-renkli ya da gerçek UV doku (~12sn, yüksek VRAM)", modelNameHint: "instant_mesh" },
 ];
 
 const REMESH_OPTIONS: { id: string; label: string }[] = [
@@ -80,6 +84,10 @@ export default function MeshPanel() {
   // hunyuan3d'ye özgü
   const [numInferenceSteps, setNumInferenceSteps] = useState(30);
   const [octreeResolution, setOctreeResolution] = useState(256);
+  // instantmesh'e özgü
+  const [imSteps, setImSteps] = useState(50);
+  const [imView, setImView] = useState<4 | 6>(6);
+  const [imExportTexmap, setImExportTexmap] = useState(false);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -191,9 +199,13 @@ export default function MeshPanel() {
     } else if (family === "openlrm") {
       params.mesh_size = meshSize;
       params.mesh_thres = meshThres;
-    } else {
+    } else if (family === "hunyuan3d") {
       params.num_inference_steps = numInferenceSteps;
       params.octree_resolution = octreeResolution;
+    } else {
+      params.num_inference_steps = imSteps;
+      params.view = imView;
+      params.export_texmap = imExportTexmap;
     }
     try {
       await createJob("mesh", params);
@@ -285,6 +297,15 @@ export default function MeshPanel() {
             üretimi çalışır — doku/boyama (paint) aşaması, nvdiffrast ile aynı
             sınıftan bir CUDA Toolkit engeline takılıyor (bkz.
             vendor/hunyuan3d/NOTICE.md).
+          </p>
+        )}
+        {family === "instantmesh" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            Apache-2.0 (özel bir kullanım kısıtı yok). Diğer dört aileden{" "}
+            <strong>belirgin daha fazla VRAM</strong> kullanır (canlı ölçüm:
+            ~15.6GB) — zero123plus tam bir SD1.5-boyutlu difüzyon modeli
+            taşıyor. İlk kullanımda ayrıca ~330MB'lık bir DINO kodlayıcı
+            indirilir (Model Manager'dan bağımsız, HF'den).
           </p>
         )}
 
@@ -461,6 +482,44 @@ export default function MeshPanel() {
                 yüksek değerler çok daha yoğun mesh üretir (384 ≈ 584K vertex, ~6GB VRAM)
               </p>
             </div>
+          </>
+        )}
+        {family === "instantmesh" && (
+          <>
+            <div>
+              <label>Çoklu-görünüm difüzyon adım sayısı: {imSteps}</label>
+              <input
+                type="range"
+                min={10}
+                max={75}
+                step={5}
+                value={imSteps}
+                onChange={(e) => setImSteps(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label>Görünüm sayısı</label>
+              <select
+                value={imView}
+                onChange={(e) => setImView(Number(e.target.value) as 4 | 6)}
+                style={{ width: "100%" }}
+              >
+                <option value={6}>6 (daha kaliteli)</option>
+                <option value={4}>4 (daha hızlı)</option>
+              </select>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={imExportTexmap}
+                onChange={(e) => setImExportTexmap(e.target.checked)}
+              />
+              gerçek UV dokusu üret (yavaş — nvdiffrast+xatlas)
+            </label>
+            {!imExportTexmap && (
+              <p style={{ opacity: 0.6, margin: 0 }}>kapalıyken vertex-renkli, hızlı çıktı (upstream varsayılanı)</p>
+            )}
           </>
         )}
 

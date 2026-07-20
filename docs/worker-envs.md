@@ -1036,3 +1036,63 @@ politikası gereği yalnızca `.safetensors` indirilmişti. Yerel yama: önce
 `.safetensors`'ı `safetensors.torch.load_file` ile dene, yoksa `.bin`'e
 düş. Diffusers'ın `~/.cache/huggingface/modules/diffusers_modules/`
 önbelleği de temizlendi (değişikliğin görülmesi için).
+
+## Faz 9 — InstantMesh beşinci aile olarak eklendi (LRM+FlexiCubes)
+
+CUDA Toolkit kurulumunun ilk gerçek faydası: InstantMesh (TencentARC),
+`src/models/lrm_mesh.py`'de modül seviyesinde `nvdiffrast` import ediyor
+ama `extract_mesh(use_texture_map=False)` (varsayılan, vertex-renkli yol)
+ASLA `RasterizeCudaContext` oluşturmuyor — yalnızca `use_texture_map=True`
+(gerçek UV dokusu, `xatlas_uvmap` üzerinden) oluşturuyor. Yani nvdiffrast
+kurulu olmasa bile vertex-renkli üretim çalışırdı; ama artık her ikisi de
+çalışıyor ve ikisi de canlı test edildi.
+
+**Mimari — iki ayrı diffusers pipeline'ı + bir LRM reconstruction modeli:**
+1. `sudo-ai/zero123plus-v1.2` (temel çoklu-görünüm difüzyon modeli, tam bir
+   SD1.5-boyutlu UNet+VAE+CLIP+vision_encoder — ~4.3GB, ayrı bir HF repo)
+2. `TencentARC/InstantMesh`'in kendi `diffusion_pytorch_model.bin`'i
+   (zero123plus'ın UNet'i ÜZERİNE `strict=True` ile yüklenen "beyaz
+   arkaplan" ince ayarı — Hunyuan3D-2'nin IP-Adapter sorununun aksine, bu
+   basit bir düz state_dict yüklemesi, ek bileşen gerekmiyor)
+3. `instant_mesh_base.ckpt` (LRM+FlexiCubes reconstruction modeli —
+   `encoder_model_name: facebook/dino-vitb16` kullanıyor, İLK KULLANIMDA
+   HF'den ayrıca indiriliyor, Model Manager'dan bağımsız — OpenLRM'in
+   DINOv2 notuyla aynı desen)
+
+**zero123plus-v1.2 gerçek Downloads Manager'la indirildi** (`POST /v1/
+downloads/snapshot`, `subdir="3d"`) — otomatik olarak yalnızca
+`.safetensors` varyantlarını seçti, elle pickle-karantina gerekmedi.
+`custom_pipeline="zero123plus"` upstream'in bare-string deseni (diffusers'ın
+HF community pipelines'tan AĞDAN çektiği) yerine `vendor/instantmesh/
+zero123plus/` yerel klasörüne işaret edecek şekilde değiştirildi —
+OpenLRM/Hunyuan3D-2 ile aynı "yerel kod, ağ çağrısı yok" kuralı.
+
+**FlexiCubes tamamen vendor edilmiş, saf PyTorch** (`src/models/geometry/
+rep_3d/flexicubes.py`) — ekstra bir `flexicubes` paketi ya da CUDA uzantısı
+GEREKMİYOR, InstantMesh'in kendi yazarları tarafından paket içine gömülmüş.
+
+**Model yükleme sorunsuz geçti** — Hunyuan3D-2'nin aksine hiçbir strict-
+load/checkpoint uyumsuzluğu YAŞANMADI, ilk denemede çalıştı. Fark muhtemelen
+InstantMesh'in checkpoint'lerinin kendi yükleme kodlarıyla (`run.py`/
+`modules.py` DEĞİL, düz `torch.load`+`load_state_dict`) aynı anda
+üretilmiş/test edilmiş olması.
+
+**Canlı doğrulama (gerçek `/v1/jobs` API'si üzerinden):** `num_inference_
+steps=30, view=6, export_texmap=false` ile **19sn'de** (worker soğuk
+başlangıç + model yükleme dahil) 46.012 vertex/92.016 yüz. Standalone
+testte `export_texmap=true` (nvdiffrast+xatlas UV pişirme) ile 42.3sn'de
+59.526 vertex/95.804 yüz, gerçek `TextureVisuals` materyali doğrulandı.
+**VRAM tepe noktası canlı ölçüldü: 15.590MB** (`num_inference_steps=50,
+export_texmap=false`) — diğer dört aileden BELİRGİN daha ağır (zero123plus
+tam bir SD1.5-boyutlu difüzyon modeli taşıdığı için); `vram_estimate()`
+16.000MB'a güncellendi.
+
+Vendor: `src/` (LRM+FlexiCubes model + geometri/renderer/encoder alt
+modülleri) ve `zero123plus/` (`Zero123PlusPipeline`, `diffusers.
+StableDiffusionPipeline` alt sınıfı) `vendor/instantmesh/`'e kopyalandı, kod
+değişikliği yapılmadı. Lisans: Apache-2.0 (özel UI uyarısı gerekmiyor,
+TripoSR'la aynı muamele). Ayrıntı: `vendor/instantmesh/NOTICE.md`.
+
+**Kademeli listenin geri kalanı (TRELLIS/CRM):** CUDA Toolkit engeli
+kalktığı için artık teorik olarak tractable — henüz adapter yazılmadı, bu
+iş devam ediyor.

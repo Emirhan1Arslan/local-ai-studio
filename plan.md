@@ -641,7 +641,27 @@ kurmak riskli (sessizce bozuk/eksik dokularla sonuçlanabilir) — denenmedi.
 `family="hunyuan3d"` hâlâ yalnızca shape üretiyor. Ayrıntılar
 docs/worker-envs.md ve vendor/hunyuan3d/NOTICE.md'de.
 
-**Sıradaki adım:** InstantMesh/TRELLIS/CRM artık CUDA Toolkit açısından
+**InstantMesh beşinci aile olarak canlı doğrulandı (LRM+FlexiCubes,
+zero123plus çoklu-görünüm difüzyonu üzerine):** CUDA Toolkit kurulumunun
+ilk somut faydası — nvdiffrast artık gerçekten çalışıyor. Mimari üç parça:
+zero123plus-v1.2 (temel çoklu-görünüm difüzyon, ~4.3GB, gerçek Downloads
+Manager ile indirildi), InstantMesh'in kendi "beyaz arkaplan" UNet ince
+ayarı (basit `strict=True` state_dict yüklemesi — Hunyuan3D-2'nin IP-
+Adapter sorunuyla KARŞILAŞILMADI), ve `instant_mesh_base.ckpt` LRM/
+FlexiCubes reconstruction modeli (`facebook/dino-vitb16` kodlayıcısı ilk
+kullanımda ayrıca iniyor, OpenLRM'in DINOv2 notuyla aynı desen). FlexiCubes
+tamamen vendor edilmiş saf PyTorch — ekstra paket/uzantı gerekmiyor. Canlı
+doğrulama (gerçek `/v1/jobs` API'si): 19sn'de (soğuk başlangıç dahil)
+46.012 vertex/92.016 yüz (vertex-renkli, varsayılan); UV dokulu mod da
+(nvdiffrast+xatlas) ayrıca doğrulandı, 42.3sn'de gerçek `TextureVisuals`
+materyaliyle. VRAM tepe noktası 15.590MB ölçüldü — diğer dört aileden
+belirgin daha ağır (zero123plus tam SD1.5-boyutlu bir difüzyon modeli
+taşıyor). Lisansı Apache-2.0, özel UI uyarısı gerekmiyor. Ayrıntılar
+docs/worker-envs.md ve vendor/instantmesh/NOTICE.md'de.
+
+**Kademeli liste durumu:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
+(shape), InstantMesh — beş aile canlı doğrulandı ve `MeshPanel.tsx`'e
+bağlandı. **Sıradaki adım:** TRELLIS/CRM artık CUDA Toolkit açısından
 tractable — adapter'ları henüz yazılmadı, bu iş devam ediyor.
 
 ---

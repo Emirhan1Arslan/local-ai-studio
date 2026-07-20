@@ -1,15 +1,16 @@
 """Mesh (3D) adapter'ı (Faz 9): Image-to-3D — kademeli liste (plan.md adım 1).
 TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
-OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer) ve
-Hunyuan3D-2 (yalnızca shape — bkz. aşağı) desteklenen dört aile.
+OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer),
+Hunyuan3D-2 (yalnızca shape — bkz. aşağı) ve InstantMesh (LRM+FlexiCubes,
+zero123plus çoklu-görünüm difüzyonu üzerine) desteklenen beş aile.
 
 NVIDIA CUDA Toolkit 12.8 bu makineye kuruldu (2026-07-20, kullanıcı elle
 çalıştırdı, Display.Driver bileşeni HARİÇ — sürücü 576.88'de değişmeden
 kaldı). Bu, önceki "nvdiffrast/CUDA Toolkit eksik" engelini KALDIRDI —
 `nvdiffrast` ve `custom_rasterizer_kernel` artık bu makinede gerçekten
-derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh/TRELLIS/CRM bu
-yüzden ARTIK teorik olarak tractable — henüz adapter yazılmadı (sıradaki
-iş), CUDA Toolkit engeli değil.
+derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh bu sayede eklendi.
+TRELLIS/CRM da artık teorik olarak tractable — henüz adapter yazılmadı
+(sıradaki iş), CUDA Toolkit engeli değil.
 
 Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi. texgen/paint
 (doku/boyama) kısmı VENDOR EDİLDİ (`vendor/hunyuan3d/hy3dgen/texgen`,
@@ -25,12 +26,12 @@ Bu makinede Hunyuan3D-2 çıktısı dokusuz (vertex-renksiz) mesh'tir —
 triposr'ın ham çıktısıyla aynı sınıfta.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
-hy3dgen/rembg/trimesh importları metod içindedir; API süreci bu modülü hiç
-yüklemez.
+hy3dgen/src(instantmesh)/rembg/trimesh importları metod içindedir; API
+süreci bu modülü hiç yüklemez.
 
-Dört ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
-`vendor/stablefast3d`, `vendor/openlrm`, `vendor/hunyuan3d`) — bkz. ilgili
-NOTICE.md dosyaları.
+Beş ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
+`vendor/stablefast3d`, `vendor/openlrm`, `vendor/hunyuan3d`,
+`vendor/instantmesh`) — bkz. ilgili NOTICE.md dosyaları.
 
 **LİSANS UYARISI:** stable-fast-3d → Stability AI Community License
 (araştırma/kişisel serbest, yıllık geliri 1M USD'yi aşan kuruluşlar için
@@ -38,10 +39,11 @@ Enterprise License gerekir — XTTS-v2 ile aynı desen, bkz. audio.py).
 openlrm → CC-BY-NC-4.0 (yalnızca araştırma/kişisel, TİCARİ KULLANIM YOK).
 hunyuan3d → Tencent Hunyuan 3D 2.0 Community License (AB/UK/Güney Kore
 hariç her yerde serbest; aylık 1M aktif kullanıcıyı aşan ürünler için
-Tencent'ten ayrı lisans gerekir). TripoSR MIT.
+Tencent'ten ayrı lisans gerekir). TripoSR/instantmesh MIT/Apache-2.0 (özel
+uyarı gerekmez).
 
 params:
-- family: triposr (vars.) | sf3d | openlrm | hunyuan3d
+- family: triposr (vars.) | sf3d | openlrm | hunyuan3d | instantmesh
 - image_path: girdi görsel (zorunlu)
 - model_path: Model Browser'dan seçilen ağırlık dosyası ya da HF repo id
   (boşsa ailenin varsayılan HF repo'su kullanılır — ilk kullanımda ağdan iner)
@@ -67,6 +69,15 @@ hunyuan3d'ye özgü:
 - octree_resolution: hacim kod çözme ızgara çözünürlüğü (vars. 256 —
   upstream varsayılanı 384'tür ama ~584K vertex üretiyor, 256 daha hafif)
 
+instantmesh'e özgü:
+- num_inference_steps: zero123plus çoklu-görünüm difüzyon adım sayısı
+  (vars. 50 — upstream CLI varsayılanı 75, UI için düşürüldü)
+- view: 4 | 6 (vars. 6) — zero123plus'ın ürettiği görünüm sayısı
+- scale: obje ölçeği (vars. 1.0)
+- export_texmap: bool (vars. False) — True ise xatlas+nvdiffrast ile gerçek
+  UV dokusu üretir (yavaş); False ise vertex-renkli mesh (hızlı, upstream
+  varsayılanı)
+
 output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı seçer)
 """
 
@@ -84,12 +95,14 @@ _FAMILY_VENDOR_DIR = {
     "sf3d": os.path.join(_VENDOR_BASE, "stablefast3d"),
     "openlrm": os.path.join(_VENDOR_BASE, "openlrm"),
     "hunyuan3d": os.path.join(_VENDOR_BASE, "hunyuan3d"),
+    "instantmesh": os.path.join(_VENDOR_BASE, "instantmesh"),
 }
 _FAMILY_DEFAULT_REPO = {
     "triposr": "stabilityai/TripoSR",
     "sf3d": "stabilityai/stable-fast-3d",
     "openlrm": "zxhezexin/openlrm-mix-base-1.1",
     "hunyuan3d": "tencent/Hunyuan3D-2",
+    "instantmesh": "TencentARC/InstantMesh",
 }
 
 # Tek-adımlı bir ileri geçiş (diffusion değil, adım sayısı yok) — RTX 5090'da
@@ -100,7 +113,19 @@ _FAMILY_DEFAULT_REPO = {
 # (num_inference_steps=30, octree_resolution=256 varsayılanlarıyla; 20 adım/
 # 256 çözünürlükte canlı ölçüm 7.8sn sürdü — diffusion örneklemesi ~1.9sn,
 # hacim kod çözme ~4.7sn, adım sayısından bağımsız kısım baskın).
-_ESTIMATE_SECONDS = {"triposr": 10.0, "sf3d": 15.0, "openlrm": 8.0, "hunyuan3d": 9.0}
+_ESTIMATE_SECONDS = {
+    "triposr": 10.0,
+    "sf3d": 15.0,
+    "openlrm": 8.0,
+    "hunyuan3d": 9.0,
+    # canlı ölçüldü (yüklü model, adaLN/dino ilk-kullanım indirmesi hariç):
+    # num_inference_steps=30, export_texmap=False ile 7.5sn; export_texmap=
+    # True ile (nvdiffrast+xatlas UV pişirme dahil) 29.2sn. UI varsayımı
+    # export_texmap=False + num_inference_steps=50 (upstream CLI'nin 75'i
+    # yerine) — diffusion adım sayısıyla ~doğrusal ölçeklenen kısma göre
+    # ekstrapole edildi.
+    "instantmesh": 12.0,
+}
 
 
 def estimate_seconds(family: str) -> float:
@@ -233,6 +258,58 @@ def _load_hunyuan3d_pipeline(repo: str, device: str):
     )
 
 
+def _load_instantmesh(repo: str, device: str) -> dict:
+    """`repo`, Model Manager'daki `instant_mesh_base.ckpt`'in klasörü
+    (`_resolve_repo` dosya->dirname çeviriyor) — aynı klasörde upstream'in
+    "white-background" ince ayarlı UNet'i (`diffusion_pytorch_model.bin`) de
+    bekleniyor. zero123plus'ın kendi temel ağırlıkları (~4.3GB, ayrı bir HF
+    repo'su — `sudo-ai/zero123plus-v1.2`) `models/3d/` altında KARDEŞ bir
+    klasörde aranıyor (`InstantMesh/`'in yanında `zero123plus-v1.2/`);
+    yoksa upstream'in `from_pretrained("sudo-ai/zero123plus-v1.2")` HF
+    indirme akışına düşülüyor. `custom_pipeline`, upstream'in bare-string
+    `"zero123plus"` deseni (diffusers'ın HF community pipelines'tan ağdan
+    çektiği) yerine vendor edilmiş yerel klasöre işaret ediyor — diğer
+    ailelerle aynı "yerel kod, ağ çağrısı yok" kuralı."""
+    import torch
+    from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
+
+    vendor_dir = _FAMILY_VENDOR_DIR["instantmesh"]
+    dtype = torch.float16 if device == "cuda" else torch.float32
+
+    zero123plus_dir = os.path.join(os.path.dirname(repo), "zero123plus-v1.2")
+    zero123plus_repo = zero123plus_dir if os.path.isdir(zero123plus_dir) else "sudo-ai/zero123plus-v1.2"
+    pipeline = DiffusionPipeline.from_pretrained(
+        zero123plus_repo,
+        custom_pipeline=os.path.join(vendor_dir, "zero123plus"),
+        torch_dtype=dtype,
+    )
+    pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
+        pipeline.scheduler.config, timestep_spacing="trailing"
+    )
+    unet_ckpt_path = os.path.join(repo, "diffusion_pytorch_model.bin")
+    unet_state_dict = torch.load(unet_ckpt_path, map_location="cpu")
+    pipeline.unet.load_state_dict(unet_state_dict, strict=True)
+    pipeline = pipeline.to(device)
+
+    from omegaconf import OmegaConf
+
+    from src.utils.train_util import instantiate_from_config
+
+    config = OmegaConf.load(os.path.join(vendor_dir, "configs", "instant-mesh-base.yaml"))
+    recon_model = instantiate_from_config(config.model_config)
+    model_ckpt_path = os.path.join(repo, "instant_mesh_base.ckpt")
+    model_state_dict = torch.load(model_ckpt_path, map_location="cpu")["state_dict"]
+    model_state_dict = {
+        k[14:]: v for k, v in model_state_dict.items() if k.startswith("lrm_generator.")
+    }
+    recon_model.load_state_dict(model_state_dict, strict=True)
+    recon_model = recon_model.to(device)
+    recon_model.init_flexicubes_geometry(device, fovy=30.0)
+    recon_model = recon_model.eval()
+
+    return {"pipeline": pipeline, "model": recon_model, "infer_config": config.infer_config}
+
+
 def _resolve_repo(model_path: str, family: str) -> str:
     repo = model_path or _FAMILY_DEFAULT_REPO[family]
     # Model Browser tekil bir ağırlık dosyası verebilir (config.yaml/.ckpt/
@@ -286,6 +363,8 @@ class MeshAdapter:
             model = _build_openlrm_inferrer(repo)
         elif family == "hunyuan3d":
             model = _load_hunyuan3d_pipeline(repo, device)
+        elif family == "instantmesh":
+            model = _load_instantmesh(repo, device)
         else:
             raise AssertionError("unreachable")
 
@@ -412,6 +491,74 @@ class MeshAdapter:
                 num_inference_steps=num_inference_steps,
                 octree_resolution=octree_resolution,
             )[0]
+        elif family == "instantmesh":
+            import numpy as np
+            import torch
+            import trimesh
+            from einops import rearrange
+            from torchvision.transforms import v2
+
+            from src.utils.camera_util import get_zero123plus_input_cameras
+
+            num_inference_steps = int(params.get("num_inference_steps", 50))
+            view = int(params.get("view", 6))
+            scale = float(params.get("scale", 1.0))
+            export_texmap = bool(params.get("export_texmap", False))
+            pipeline = self._model["pipeline"]
+            recon_model = self._model["model"]
+            infer_config = self._model["infer_config"]
+
+            yield _progress(f"zero123plus çoklu-görünüm difüzyonu ({num_inference_steps} adım)…")
+            mv_image = pipeline(image, num_inference_steps=num_inference_steps).images[0]
+
+            arr = np.asarray(mv_image, dtype=np.float32) / 255.0
+            imgs = torch.from_numpy(arr).permute(2, 0, 1).contiguous().float()
+            imgs = rearrange(imgs, "c (n h) (m w) -> (n m) c h w", n=3, m=2)
+            imgs = imgs.unsqueeze(0).to(self._device)
+            imgs = v2.functional.resize(imgs, 320, interpolation=3, antialias=True).clamp(0, 1)
+
+            input_cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0 * scale).to(
+                self._device
+            )
+            if view == 4:
+                indices = torch.tensor([0, 2, 4, 5]).long().to(self._device)
+                imgs = imgs[:, indices]
+                input_cameras = input_cameras[:, indices]
+
+            yield _progress("LRM triplane çıkarımı çalışıyor…")
+            with torch.no_grad():
+                planes = recon_model.forward_planes(imgs, input_cameras)
+                yield _progress("mesh çıkarılıyor (FlexiCubes)…")
+                mesh_out = recon_model.extract_mesh(
+                    planes, use_texture_map=export_texmap, **infer_config
+                )
+
+            if export_texmap:
+                import tempfile
+
+                from src.utils.mesh_util import save_obj_with_mtl
+
+                vertices, faces, uvs, mesh_tex_idx, tex_map = mesh_out
+                tmp_dir = tempfile.mkdtemp()
+                tmp_obj = os.path.join(tmp_dir, "mesh.obj")
+                save_obj_with_mtl(
+                    vertices.data.cpu().numpy(),
+                    uvs.data.cpu().numpy(),
+                    faces.data.cpu().numpy(),
+                    mesh_tex_idx.data.cpu().numpy(),
+                    tex_map.permute(1, 2, 0).data.cpu().numpy(),
+                    tmp_obj,
+                )
+                mesh = trimesh.load(tmp_obj, force="mesh")
+            else:
+                vertices, faces, vertex_colors = mesh_out
+                # save_glb'nin (src/utils/mesh_util.py) eksen dönüşümüyle aynı —
+                # upstream'in kendi koordinat düzeltmesi, GLB/diğer formatlar
+                # için de tutarlı.
+                vertices = vertices @ np.array(
+                    [[-1, 0, 0], [0, 1, 0], [0, 0, -1]], dtype=np.float32
+                )
+                mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=vertex_colors)
         else:
             raise AssertionError("unreachable")
 
@@ -449,6 +596,12 @@ class MeshAdapter:
         # bırakılıyor.
         if family in ("sf3d", "hunyuan3d"):
             return 6_500
+        if family == "instantmesh":
+            # Canlı ölçüldü — num_inference_steps=50, view=6, export_texmap=
+            # False ile tepe VRAM 15590MB. Diğer dört aileden BELİRGİN daha
+            # ağır: zero123plus tam bir SD1.5-boyutlu UNet+VAE+CLIP+vision_
+            # encoder taşıyor, LRM triplane/FlexiCubes bunun üstüne biniyor.
+            return 16_000
         return 4_000
 
 
