@@ -12,6 +12,7 @@ import ConsolePanel from "./panels/ConsolePanel";
 import DownloadsPanel from "./panels/DownloadsPanel";
 import ExplorePanel from "./panels/ExplorePanel";
 import GeneratePanel from "./panels/GeneratePanel";
+import MeshPanel from "./panels/MeshPanel";
 import ModelsPanel from "./panels/ModelsPanel";
 import QueuePanel from "./panels/QueuePanel";
 import SettingsPanel from "./panels/SettingsPanel";
@@ -37,6 +38,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   chat: ChatPanel,
   audio: AudioPanel,
   video: VideoPanel,
+  mesh: MeshPanel,
 };
 
 const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
@@ -45,6 +47,7 @@ const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "chat", title: "Sohbet", near: "generate" },
   { id: "audio", title: "Ses", near: "chat" },
   { id: "video", title: "Video", near: "audio" },
+  { id: "mesh", title: "3D", near: "video" },
   { id: "downloads", title: "İndirmeler", near: "models" },
   { id: "explore", title: "Keşfet", near: "downloads" },
   { id: "queue", title: "Kuyruk", near: "models" },

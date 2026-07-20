@@ -509,10 +509,31 @@ Blender'a geri import edildi, birebir eşleşti — "FBX Blender'da import
 edilir" DoD'si bununla otomatik sağlanmış oluyor. Blender kurulu değilse
 (farklı bir makinede) anlaşılır bir hata veriyor, sessizce atlanmıyor.
 
-**Sıradaki adımlar:** 3D viewer (three.js/R3F, apps/desktop'ta frontend işi),
-Görüntü→3D köprüsü (Faz 4 çıktısını tek tıkla mesh job'una gönderme),
-kademeli listenin sonraki modelleri (Stable Fast 3D/InstantMesh/TRELLIS/
-Hunyuan3D-2/OpenLRM-CRM).
+**3D viewer paneli eklendi (`apps/desktop/src/panels/MeshPanel.tsx`):**
+`three@0.185.1` + `@react-three/fiber@8.18.0` + `@react-three/drei@9.122.0`
+kuruldu — `@react-three/fiber` v9 React 19 istiyor (`react: >=19 <19.3`),
+bu proje React 18.3.1'de olduğu için v8 serisi (React 18 uyumlu) seçildi.
+Panel: görsel yükle → TripoSR ile üret (Model Browser'dan model seçimi,
+diğer panellerle aynı desen) → sonucu Canvas'ta OrbitControls + wireframe
+anahtarıyla göster → convert/decimate/repair araçlarını (meshtool job'u)
+tetikleyip GLB/OBJ/STL/PLY/FBX olarak dışa aktar. App.tsx'e kayıt edildi.
+`tsc -b` ve `vite build` temiz geçti (798 modül, hata yok). **Doğrulama
+sınırı:** bu ortamda tarayıcı otomasyon aracı yok — derleme/paketleme
+doğrulandı ama Canvas'ın gerçekten render olduğu görsel olarak TEYİT
+EDİLEMEDİ; kullanıcının uygulamada açıp bakması gerekiyor.
+
+(Kurulum notu: ilk denemede yanlışlıkla `npm install` kullanıldı — bu proje
+kök `pnpm-lock.yaml` ile **pnpm** workspace'i; `apps/desktop/node_modules`
+altında npm'in kendi ayrı ağacını oluşturmuştu, silinip `pnpm add` ile
+doğru şekilde yeniden kuruldu.)
+
+**Turntable önizleme videosu YOK** (plan.md'nin orijinal madde 4 önerisi) —
+bu dilimde kapsam dışı bırakıldı, temel viewer (orbit/wireframe/ışık) öncelik
+aldı.
+
+**Sıradaki adımlar:** Görüntü→3D köprüsü (Faz 4 çıktısını tek tıkla mesh
+job'una gönderme), kademeli listenin sonraki modelleri (Stable Fast 3D/
+InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
 
 ---
 
