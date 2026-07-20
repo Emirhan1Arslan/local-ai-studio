@@ -861,6 +861,7 @@ dependencies = [
     { name = "studio-core" },
     { name = "studio-inference" },
     { name = "studio-models" },
+    { name = "studio-workflows" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -870,6 +871,7 @@ requires-dist = [
     { name = "studio-core", editable = "backend/studio_core" },
     { name = "studio-inference", editable = "backend/studio_inference" },
     { name = "studio-models", editable = "backend/studio_models" },
+    { name = "studio-workflows", editable = "backend/studio_workflows" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 

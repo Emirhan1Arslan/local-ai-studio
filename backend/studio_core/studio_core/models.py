@@ -171,3 +171,42 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Workflow(Base):
+    """Kaydedilmiş node-graph tanımı (Faz 10). `graph` alanı studio_workflows.graph.Graph
+    ile aynı şekli taşır: {"nodes": [...], "edges": [...]}."""
+
+    __tablename__ = "workflows"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255), default="Adsız workflow")
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    graph: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class WorkflowRunStatus(enum.StrEnum):
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class WorkflowRun(Base):
+    """Bir workflow'un tek çalıştırılışı. Durum makinesi: running → done|failed."""
+
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"))
+    status: Mapped[WorkflowRunStatus] = mapped_column(
+        Enum(WorkflowRunStatus, values_callable=lambda e: [m.value for m in e]),
+        default=WorkflowRunStatus.RUNNING,
+    )
+    seed: Mapped[int] = mapped_column(Integer, default=0)
+    # node_id -> {"status", "outputs", "error", "from_cache"} (bkz. executor.NodeResult)
+    node_results: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

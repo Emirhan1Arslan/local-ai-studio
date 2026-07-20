@@ -7,6 +7,7 @@ dependencies = [
     "studio-core",
     "studio-models",
     "studio-inference",
+    "studio-workflows",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
 ]
@@ -18,6 +19,7 @@ studio-api = "studio_api.main:main"
 studio-core = { workspace = true }
 studio-models = { workspace = true }
 studio-inference = { workspace = true }
+studio-workflows = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
