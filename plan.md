@@ -679,13 +679,34 @@ Bu bileşen **Inria/MPII Gaussian-Splatting Lisansı** (yalnızca araştırma,
 TİCARİ KULLANIM YOK) taşıyor, UI'da gösteriliyor. Checkpoint yükleme
 Hunyuan3D-2'nin aksine sorunsuz geçti. Canlı doğrulama (gerçek `/v1/jobs`
 API'si): 9.862 vertex/15.750 yüz, gerçek pişirilmiş doku materyali; VRAM
-tepe noktası 11.583MB — altı aile arasında en yüksek. Ayrıntılar
-docs/worker-envs.md ve vendor/trellis/NOTICE.md'de.
+tepe noktası 11.583MB. Ayrıntılar docs/worker-envs.md ve
+vendor/trellis/NOTICE.md'de.
 
-**Kademeli liste durumu:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
-(shape), InstantMesh, TRELLIS — altı aile canlı doğrulandı ve
-`MeshPanel.tsx`'e bağlandı. **Sıradaki adım:** CRM artık CUDA Toolkit
-açısından tractable — adapter'ı henüz yazılmadı, bu iş devam ediyor.
+**CRM yedinci ve kademeli listenin SONUNCU ailesi olarak canlı doğrulandı
+(iki aşamalı çoklu-görünüm difüzyonu + nvdiffrast UV pişirme):** CRM'in
+`imagedream` backbone'u `diffusers`'a bağımlı olmayan, kendi başına bir
+"ldm"-tarzı paket — Hunyuan3D-2/InstantMesh'te yaşanan diffusers sürüm
+çatışmalarını baştan atlattı. Aynı xformers/sm_120 uyumsuzluğuyla
+karşılaşıldı (TRELLIS'teki gibi) ama BURADA q/k/v zaten uniform bir batch
+biçiminde olduğu için TRELLIS'in paketleme/mask gerektiren düzeltmesinden
+çok daha basit bir sdpa köprüsü yeterli oldu. Ayrıca iki ayrı, TRELLIS'te
+görülmeyen sorun bulundu: (1) yalnızca bir scheduler config'i için
+kullanılan bir HuggingFace reposu (`stabilityai/stable-diffusion-2-1-base`)
+artık anonim erişime bile 401 döndürüyor — standart, iyi bilinen
+hiperparametrelerle yerel olarak kuruldu; (2) `envs/3d`'ye kurulan `kiui`
+paketinin KENDİSİNDE gerçek bir bug (boş bir `typing.py`, `NameError`) —
+yerel site-packages kopyası düzeltildi. Canlı doğrulama (gerçek `/v1/jobs`
+API'si): 27.190 vertex/44.466 yüz, gerçek UV dokusu; VRAM tepe noktası
+13.556MB — TRELLIS'ten sonra en ağır ikinci aile. Ayrıntılar
+docs/worker-envs.md ve vendor/crm/NOTICE.md'de.
+
+**Kademeli liste TAMAMLANDI:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
+(shape), InstantMesh, TRELLIS, CRM — yedi aile de canlı doğrulandı ve
+`MeshPanel.tsx`'e bağlandı, hepsi gerçek `/v1/jobs` API'si üzerinden test
+edildi. Tek istisna Hunyuan3D-2'nin texgen/paint aşaması (upstream'in
+kendi checkpoint/kod uyumsuzluğu, CUDA Toolkit'ten bağımsız bir engel).
+Bu fazın dönüm noktası NVIDIA CUDA Toolkit kurulumuydu — InstantMesh/
+TRELLIS/CRM'in üçü de öncesinde kapsam dışıydı.
 
 ---
 

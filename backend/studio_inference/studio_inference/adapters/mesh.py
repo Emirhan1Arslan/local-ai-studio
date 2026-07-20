@@ -2,16 +2,29 @@
 TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
 OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer),
 Hunyuan3D-2 (yalnızca shape — bkz. aşağı), InstantMesh (LRM+FlexiCubes,
-zero123plus çoklu-görünüm difüzyonu üzerine) ve TRELLIS (sparse-voxel
-yapı + structured latent, gerçek dokulu çıktı) desteklenen altı aile.
+zero123plus çoklu-görünüm difüzyonu üzerine), TRELLIS (sparse-voxel
+yapı + structured latent, gerçek dokulu çıktı) ve CRM (Convolutional
+Reconstruction Model, iki aşamalı çoklu-görünüm difüzyonu + nvdiffrast
+UV pişirme) desteklenen yedi aile — kademeli listenin TAMAMI eklendi.
 
 NVIDIA CUDA Toolkit 12.8 bu makineye kuruldu (2026-07-20, kullanıcı elle
 çalıştırdı, Display.Driver bileşeni HARİÇ — sürücü 576.88'de değişmeden
 kaldı). Bu, önceki "nvdiffrast/CUDA Toolkit eksik" engelini KALDIRDI —
 `nvdiffrast` ve `custom_rasterizer_kernel` artık bu makinede gerçekten
-derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh ve TRELLIS bu
-sayede eklendi. CRM da artık teorik olarak tractable — henüz adapter
-yazılmadı (sıradaki iş), CUDA Toolkit engeli değil.
+derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh/TRELLIS/CRM bu
+sayede eklendi.
+
+CRM'in kendi `imagedream` (vendored, diffusers'a bağımsız ldm-tarzı)
+UNet'i `BasicTransformerBlock.__init__`'te KOŞULSUZ `assert XFORMERS_
+IS_AVAILBLE` içeriyordu — TRELLIS'te bulunan aynı xformers/sm_120
+uyumsuzluğu (bkz. aşağı). q/k/v zaten `[B*heads, N, dim_head]` biçiminde
+olduğu için TRELLIS'in paketlenmiş-diziyi elle doldurma gerektiren
+düzeltmesinden DAHA BASİT bir sdpa köprüsü yeterliydi — sdpa öndeki
+boyutu zaten toplu (batch) boyutu olarak ele alıyor. Ayrıca `envs/3d`'ye
+kurulan `kiui` paketinin KENDİSİNDE gerçek bir bug bulundu (`kiui/
+typing.py` boştu, `Union`/`Literal` gibi adları hiç export etmiyordu —
+`kiui/op.py` bunlara güveniyordu) — yerel site-packages kopyası
+düzeltildi (vendor kodu değil). Ayrıntılar vendor/crm/NOTICE.md'de.
 
 TRELLIS'in `flash_attn`/`xformers` gereksinimi bu makinede İKİSİ de
 ÇALIŞMIYOR (flash_attn'in resmi Windows wheel'i yok; xformers'ın derlenmiş
@@ -39,12 +52,13 @@ Bu makinede Hunyuan3D-2 çıktısı dokusuz (vertex-renksiz) mesh'tir —
 triposr'ın ham çıktısıyla aynı sınıfta.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
-hy3dgen/src(instantmesh)/trellis/rembg/trimesh importları metod içindedir;
-API süreci bu modülü hiç yüklemez.
+hy3dgen/src(instantmesh)/trellis/crm/rembg/trimesh importları metod
+içindedir; API süreci bu modülü hiç yüklemez.
 
-Altı ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
+Yedi ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
 `vendor/stablefast3d`, `vendor/openlrm`, `vendor/hunyuan3d`,
-`vendor/instantmesh`, `vendor/trellis`) — bkz. ilgili NOTICE.md dosyaları.
+`vendor/instantmesh`, `vendor/trellis`, `vendor/crm`) — bkz. ilgili
+NOTICE.md dosyaları.
 
 **LİSANS UYARISI:** stable-fast-3d → Stability AI Community License
 (araştırma/kişisel serbest, yıllık geliri 1M USD'yi aşan kuruluşlar için
@@ -52,11 +66,13 @@ Enterprise License gerekir — XTTS-v2 ile aynı desen, bkz. audio.py).
 openlrm → CC-BY-NC-4.0 (yalnızca araştırma/kişisel, TİCARİ KULLANIM YOK).
 hunyuan3d → Tencent Hunyuan 3D 2.0 Community License (AB/UK/Güney Kore
 hariç her yerde serbest; aylık 1M aktif kullanıcıyı aşan ürünler için
-Tencent'ten ayrı lisans gerekir). TripoSR/instantmesh/trellis MIT/Apache-2.0
-(özel uyarı gerekmez).
+Tencent'ten ayrı lisans gerekir). trellis'in doku pişirme bileşimi
+(diff-gaussian-rasterization) Inria/MPII NC lisansı (TİCARİ KULLANIM YOK).
+TripoSR/instantmesh/trellis(çekirdek)/crm MIT/Apache-2.0 (özel uyarı
+gerekmez).
 
 params:
-- family: triposr (vars.) | sf3d | openlrm | hunyuan3d | instantmesh | trellis
+- family: triposr (vars.) | sf3d | openlrm | hunyuan3d | instantmesh | trellis | crm
 - image_path: girdi görsel (zorunlu)
 - model_path: Model Browser'dan seçilen ağırlık dosyası ya da HF repo id
   (boşsa ailenin varsayılan HF repo'su kullanılır — ilk kullanımda ağdan iner)
@@ -101,6 +117,15 @@ trellis'e özgü:
   upstream varsayılanı; ham çıktı çok yoğun)
 - texture_size: doku atlası çözünürlüğü (vars. 1024)
 
+crm'e özgü:
+- num_inference_steps: iki aşamalı (pixel + CCM/XYZ) çoklu-görünüm
+  difüzyonunun HER İKİSİ için de adım sayısı (vars. 30 — upstream
+  varsayılanı 50, UI için düşürüldü)
+- scale: classifier-free guidance ölçeği (vars. 5.0, upstream varsayılanı)
+- remove_background: True ise rembg ile arkaplan kaldırılır; False ise
+  upstream'in "Alpha as mask" modu (yalnızca girdi görselin alfa kanalı
+  maske olarak kullanılır, ayrıca kaldırma yapılmaz)
+
 output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı seçer)
 """
 
@@ -120,6 +145,7 @@ _FAMILY_VENDOR_DIR = {
     "hunyuan3d": os.path.join(_VENDOR_BASE, "hunyuan3d"),
     "instantmesh": os.path.join(_VENDOR_BASE, "instantmesh"),
     "trellis": os.path.join(_VENDOR_BASE, "trellis"),
+    "crm": os.path.join(_VENDOR_BASE, "crm"),
 }
 _FAMILY_DEFAULT_REPO = {
     "triposr": "stabilityai/TripoSR",
@@ -128,6 +154,7 @@ _FAMILY_DEFAULT_REPO = {
     "hunyuan3d": "tencent/Hunyuan3D-2",
     "instantmesh": "TencentARC/InstantMesh",
     "trellis": "microsoft/TRELLIS-image-large",
+    "crm": "Zhengyi/CRM",
 }
 
 # Tek-adımlı bir ileri geçiş (diffusion değil, adım sayısı yok) — RTX 5090'da
@@ -155,6 +182,10 @@ _ESTIMATE_SECONDS = {
     # gaussian render + doku pişirmede (to_glb), yalnızca sparse-structure/
     # slat örneklemesi ~7sn.
     "trellis": 28.0,
+    # canlı ölçüldü (yüklü model): num_inference_steps=30, scale=5.0 ile
+    # çoklu-görünüm difüzyonu (iki aşama BİRLİKTE) 11sn, mesh çıkarımı +
+    # nvdiffrast UV pişirme 29sn.
+    "crm": 40.0,
 }
 
 
@@ -369,6 +400,55 @@ def _load_trellis(repo: str, device: str):
     return pipeline
 
 
+def _load_crm(repo: str, device: str) -> dict:
+    """`repo`, Model Manager'daki `CRM.pth`'in klasörüdür (`_resolve_repo`
+    dosya->dirname çeviriyor) — `pixel-diffusion.pth`/`ccm-diffusion.pth`
+    aynı klasörde KARDEŞ dosyalar olarak bekleniyor. `vendor/crm`'in kendi
+    `configs/specs_objaverse_total.json` + iki `.yaml` konfigürasyonu model
+    mimarisini/örnekleyiciyi tanımlıyor (ağırlık indirmiyor)."""
+    import json
+
+    import torch
+    from omegaconf import OmegaConf
+
+    vendor_dir = _FAMILY_VENDOR_DIR["crm"]
+    from model import CRM
+
+    specs = json.load(open(os.path.join(vendor_dir, "configs", "specs_objaverse_total.json")))
+    model = CRM(specs).to(device)
+    model.load_state_dict(
+        torch.load(os.path.join(repo, "CRM.pth"), map_location=device), strict=False
+    )
+
+    from pipelines import TwoStagePipeline
+
+    stage1_config = OmegaConf.load(
+        os.path.join(vendor_dir, "configs", "nf7_v3_SNR_rd_size_stroke.yaml")
+    ).config
+    stage2_config = OmegaConf.load(os.path.join(vendor_dir, "configs", "stage2-v2-snr.yaml")).config
+    stage1_config.models.resume = os.path.join(repo, "pixel-diffusion.pth")
+    stage2_config.models.resume = os.path.join(repo, "ccm-diffusion.pth")
+
+    # stage{1,2}_config.models.config (nf7_v3_SNR_rd_size_stroke.yaml /
+    # stage2-v2-snr.yaml içinde tanımlı) upstream'de "imagedream/configs/
+    # ...yaml" gibi vendor-köküne-göreli bir yol — TwoStagePipeline bunu
+    # OmegaConf.load ile CWD'ye göre çözüyor, worker'ın gerçek cwd'si
+    # vendor dizini olmadığı için scope'lu bir chdir gerekiyor.
+    prev_cwd = os.getcwd()
+    try:
+        os.chdir(vendor_dir)
+        pipeline = TwoStagePipeline(
+            stage1_config.models,
+            stage2_config.models,
+            stage1_config.sampler,
+            stage2_config.sampler,
+            device=device,
+        )
+    finally:
+        os.chdir(prev_cwd)
+    return {"model": model, "pipeline": pipeline}
+
+
 def _resolve_repo(model_path: str, family: str) -> str:
     repo = model_path or _FAMILY_DEFAULT_REPO[family]
     # Model Browser tekil bir ağırlık dosyası verebilir (config.yaml/.ckpt/
@@ -426,6 +506,8 @@ class MeshAdapter:
             model = _load_instantmesh(repo, device)
         elif family == "trellis":
             model = _load_trellis(repo, device)
+        elif family == "crm":
+            model = _load_crm(repo, device)
         else:
             raise AssertionError("unreachable")
 
@@ -459,7 +541,7 @@ class MeshAdapter:
 
         yield _progress("görsel hazırlanıyor…")
         image = Image.open(image_path).convert("RGBA")
-        if remove_bg and family != "trellis":
+        if remove_bg and family not in ("trellis", "crm"):
             import rembg
 
             image = _remove_background(image, rembg.new_session())
@@ -468,6 +550,9 @@ class MeshAdapter:
         # özel 518x518 bbox-crop'u BİRLİKTE yapıyor — paylaşılan resize_
         # foreground'la karıştırmak bu formatı bozar, bkz. aşağıdaki
         # pipeline.run(..., preprocess_image=True) çağrısı.
+        # crm: kendi ön işlemesi de kendine özgü (kare genişletme + sabit
+        # gri arkaplan doldurma, RGB'ye çeviriliyor) — aşağıdaki crm dalında
+        # elle yapılıyor.
         if family == "triposr":
             # TripoSR gri arkaplana compose edilmiş düz RGB bekliyor.
             arr = np.array(image).astype(np.float32) / 255.0
@@ -651,6 +736,43 @@ class MeshAdapter:
                 texture_size=texture_size,
                 verbose=False,
             )
+        elif family == "crm":
+            import trimesh
+
+            from inference import generate3d
+
+            num_inference_steps = int(params.get("num_inference_steps", 30))
+            scale = float(params.get("scale", 5.0))
+
+            # CRM'in kendi preprocess_image()'ı: rembg YA DA alfa-maske,
+            # sonra kare genişletme + sabit gri arkaplan doldurma, RGB'ye
+            # çevirme (upstream run.py --bg_choice "Auto Remove background"
+            # ile birebir aynı akış).
+            if remove_bg:
+                import rembg
+
+                img = rembg.remove(image, session=rembg.new_session())
+            else:
+                bg = Image.new("RGBA", image.size, (0, 0, 0, 0))
+                img = Image.alpha_composite(bg, image)
+            w, h = img.size
+            size = max(w, h)
+            sq = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            sq.paste(img, ((size - w) // 2, (size - h) // 2))
+            gray_bg = Image.new("RGBA", sq.size, (127, 127, 127))
+            img = Image.alpha_composite(gray_bg, sq).convert("RGB")
+
+            pipeline = self._model["pipeline"]
+            recon_model = self._model["model"]
+
+            yield _progress(f"iki aşamalı çoklu-görünüm difüzyonu ({num_inference_steps} adım)…")
+            rt_dict = pipeline(img, scale=scale, step=num_inference_steps)
+            np_imgs = np.concatenate(rt_dict["stage1_images"], 1)
+            np_xyzs = np.concatenate(rt_dict["stage2_images"], 1)
+
+            yield _progress("mesh çıkarılıyor + UV pişiriliyor (nvdiffrast)…")
+            glb_path, _obj_zip_path = generate3d(recon_model, np_imgs, np_xyzs, self._device)
+            mesh = trimesh.load(glb_path, force="mesh")
         else:
             raise AssertionError("unreachable")
 
@@ -699,6 +821,13 @@ class MeshAdapter:
             # texture_size=1024 ile tepe VRAM 11583MB (100 görünümlük
             # gaussian render + doku pişirme dahil).
             return 12_000
+        if family == "crm":
+            # Canlı ölçüldü — num_inference_steps=30, scale=5.0 ile (ısınmış
+            # model, ikinci çağrı) tepe VRAM 13556MB — yedi aile arasında
+            # TRELLIS'ten sonra ikinci en ağır: iki büyük difüzyon UNet'i
+            # (pixel + CCM/XYZ, fp16) + CRM reconstruction modeli aynı anda
+            # GPU'da.
+            return 14_000
         return 4_000
 
 

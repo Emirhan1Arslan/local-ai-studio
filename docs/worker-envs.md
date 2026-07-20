@@ -1175,6 +1175,81 @@ rasterization/` (Inria/MPII NC lisansı) hepsi `vendor/trellis/`'e
 kopyalandı. Ayrıntı ve tüm yerel yamaların tam listesi:
 `vendor/trellis/NOTICE.md`.
 
-**Kademeli listenin geri kalanı (CRM):** CUDA Toolkit engeli kalktığı
-için artık teorik olarak tractable — henüz adapter yazılmadı, bu iş
-devam ediyor.
+## Faz 9 — CRM yedinci (ve kademeli listenin SONUNCU) aile olarak eklendi
+
+`imagedream` (CRM'in çoklu-görünüm difüzyon backbone'u) fully self-contained
+bir "ldm"-tarzı pakettir — `diffusers` kütüphanesine bağımlı DEĞİL (kendi
+UNet/attention/scheduler implementasyonu, orijinal CompVis/Stability
+`stable-diffusion` reposuyla aynı soy) — bu, Hunyuan3D-2/InstantMesh'te
+yaşanan `diffusers` sürüm-pin çatışmalarını baştan atlattı.
+
+**xformers hard-assert — TRELLIS'ten DAHA BASİT bir sdpa köprüsü yeterli
+oldu:** `imagedream/ldm/modules/attention.py`'nin `BasicTransformerBlock.
+__init__`'i KOŞULSUZ `assert XFORMERS_IS_AVAILBLE` içeriyordu (TRELLIS'in
+sparse attention'ındaki gibi bir config-tabanlı seçim yolu YOKTU). q/k/v
+buradaki hesaplamada zaten `[B*heads, N, dim_head]` biçiminde (paketlenmiş
+değişken-uzunluklu bir dizi DEĞİL, uniform bir batch) — sdpa öndeki boyutu
+zaten toplu boyut olarak ele aldığı için TRELLIS'in elle doldurma+mask
+gerektiren düzeltmesinden çok daha basit, doğrudan bir fonksiyon değişimi
+yeterli oldu. `model/archs/unet.py`'deki (bir `diffusers.UNet2DModel`
+sargısı) koşulsuz `enable_xformers_memory_efficient_attention()` çağrısı da
+kaldırıldı — bu olmadan diffusers kendi varsayılan `AttnProcessor2_0`'ına
+(sdpa tabanlı) düşüyor.
+
+**Gated bir HuggingFace reposu — ağırlık değil, yalnızca bir scheduler
+config'i içindi:** `model/crm/model.py`, yalnızca DDIM scheduler
+hiperparametreleri için `stabilityai/stable-diffusion-2-1-base`'den
+`scheduler_config.json` çekiyordu. Bu repo artık anonim `curl` ile bile
+**401** dönüyor (gerçek bir erişim değişikliği, yerel `HF_TOKEN` sorunu
+DEĞİL — ikisi de ortamda tanımsızdı). Çözüm: SD2.1-base'in iyi bilinen,
+sabit hiperparametreleriyle `DDIMScheduler`'ı yerel olarak kurmak — statik
+bir config için ağ çağrısına gerek yok.
+
+**`kiui` paketinde GERÇEK bir bug bulundu (vendor kodu değil):** kurulu
+`kiui==0.3.5`'in kendi `kiui/typing.py`'si neredeyse boştu (tek satır
+yorum) — `kiui/op.py`'nin güvendiği `Union`/`Tensor`/`ndarray`/`Literal`
+hiç export edilmiyordu, `NameError`. `envs/3d`'nin site-packages kopyası
+doğrudan düzeltildi (`hunyuan3d-paint-v2-0-turbo/unet/modules.py`
+safetensors yamasıyla aynı kategori — vendor edilen kaynak değil, yerel
+ortam dosyası).
+
+**Ad çakışması:** upstream'in kendi kök-seviye `mesh.py`'si, `vendor/crm`
+sys.path'e eklendiğince `adapters/mesh.py` ile aynı bare `mesh` modülü
+adını paylaşırdı — `crm_mesh.py` olarak yeniden adlandırıldı, tek referans
+(`inference.py`'deki `from mesh import Mesh`) güncellendi.
+
+**Göreli config yolu sorunu:** `configs/nf7_v3_SNR_rd_size_stroke.yaml` /
+`stage2-v2-snr.yaml` içindeki `models.config` alanları (`imagedream/
+configs/...yaml`) vendor-köküne göreli — `TwoStagePipeline`'ın kendisi
+bunları OmegaConf.load ile CWD'ye göre çözüyor. Worker'ın gerçek CWD'si
+vendor dizini olmadığından, `_load_crm()` bu tek çağrıyı scope'lu bir
+`os.chdir()`/`finally: os.chdir(prev)` ile sarmalıyor.
+
+**`envs/3d`'ye eklenen bağımlılıklar:** `kiui`, `absl-py`, `wandb`
+(`libs/base_utils.py`'nin training-only, ama patch'lemekten daha kolay
+kurulabilen koşulsuz importları). Hiçbiri korumalı sistem torch'unu
+gölgelemedi (her kurulumdan sonra kontrol edildi).
+
+**Canlı doğrulama (gerçek `/v1/jobs` API'si üzerinden):**
+`num_inference_steps=30, scale=5.0` ile **125sn'de** (soğuk worker
+başlangıcı + ~12GB'lık iki checkpoint'in disk'ten yüklenmesi dahil)
+27.190 vertex/44.466 yüz, gerçek nvdiffrast-pişirilmiş UV dokusu
+doğrulandı. VRAM tepe noktası (ısınmış model, ikinci çağrı): **13.556MB**
+— yedi aile arasında TRELLIS'ten sonra en ağır ikincisi.
+
+Vendor: `imagedream/`, `model/`, `libs/`, `util/`, `configs/`,
+`pipelines.py`, `inference.py`, `crm_mesh.py` hepsi `vendor/crm/`'e
+kopyalandı (MIT). Ayrıntı ve tüm yerel yamaların tam listesi:
+`vendor/crm/NOTICE.md`.
+
+## Kademeli liste TAMAMLANDI
+
+plan.md'nin Faz 9 adım 1'inde listelenen altı model ailesi (TripoSR,
+Stable Fast 3D, InstantMesh, TRELLIS, Hunyuan3D-2, OpenLRM) artık hepsi
+canlı doğrulanmış, gerçek `/v1/jobs` API'si üzerinden test edilmiş ve
+`MeshPanel.tsx`'e bağlı durumda (CRM de dahil, orijinal listede yoktu ama
+aynı süreçte eklendi) — TEK istisna Hunyuan3D-2'nin texgen/paint aşaması
+(upstream'in kendi checkpoint/kod uyumsuzluğu nedeniyle, CUDA Toolkit'ten
+bağımsız bir engel, bkz. yukarıdaki not). Bu sürecin en büyük tek katkısı
+NVIDIA CUDA Toolkit kurulumuydu — InstantMesh/TRELLIS/CRM'in üçü de bundan
+önce kapsam dışıydı.

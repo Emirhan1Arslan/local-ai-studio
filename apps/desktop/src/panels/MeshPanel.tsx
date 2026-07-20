@@ -16,21 +16,21 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-// plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı), Stable
-// Fast 3D (dokulu/tekstürlü çıktı), OpenLRM (vertex-renkli, yüksek çözünürlük),
-// Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh), InstantMesh
-// (LRM+FlexiCubes, zero123plus çoklu-görünüm difüzyonu üzerine) ve TRELLIS
-// (sparse-voxel yapı + gerçek Gaussian-pişirmeli doku) canlı doğrulandı ve
-// buraya bağlandı. NVIDIA CUDA Toolkit 2026-07-20'de kuruldu (bkz.
-// docs/worker-envs.md) — bu, InstantMesh/TRELLIS'i bloke eden nvdiffrast/
-// xformers/flash_attn engellerini kaldırdı (TRELLIS'in sparse attention'ı
-// için upstream'in kendi 'sdpa' desenini genişlettik — bkz.
-// vendor/trellis/NOTICE.md). CRM henüz eklenMEDİ (adapter yazılmadı, artık
-// CUDA Toolkit engeli değil). Hunyuan3D-2'nin texgen/paint (doku/boyama)
-// kısmı ayrı, farklı bir engelle karşılaştı — upstream'in checkpoint'i
-// kendi yükleme kodunun oluşturmadığı IP-Adapter anahtarları içeriyor
-// (ayrıntı: vendor/hunyuan3d/NOTICE.md).
-type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d" | "instantmesh" | "trellis";
+// plan.md Faz 9 adım 1'in kademeli listesi TAMAMLANDI — yedi aile de canlı
+// doğrulandı: TripoSR (hafif, hızlı), Stable Fast 3D (dokulu/tekstürlü),
+// OpenLRM (vertex-renkli, yüksek çözünürlük), Hunyuan3D-2 (yalnızca shape —
+// dokusuz, yoğun mesh), InstantMesh (LRM+FlexiCubes, zero123plus çoklu-
+// görünüm difüzyonu), TRELLIS (sparse-voxel yapı + gerçek Gaussian-pişirmeli
+// doku) ve CRM (iki aşamalı çoklu-görünüm difüzyonu + nvdiffrast UV
+// pişirme). NVIDIA CUDA Toolkit 2026-07-20'de kuruldu (bkz.
+// docs/worker-envs.md) — InstantMesh/TRELLIS/CRM'i bloke eden nvdiffrast/
+// xformers/flash_attn engellerini kaldırdı (TRELLIS ve CRM'in kendi
+// attention modüllerinde upstream'in 'sdpa' desenini genişlettik — bkz.
+// vendor/trellis/NOTICE.md, vendor/crm/NOTICE.md). Hunyuan3D-2'nin texgen/
+// paint (doku/boyama) kısmı ayrı, farklı bir engelle karşılaştı —
+// upstream'in checkpoint'i kendi yükleme kodunun oluşturmadığı IP-Adapter
+// anahtarları içeriyor (ayrıntı: vendor/hunyuan3d/NOTICE.md).
+type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d" | "instantmesh" | "trellis" | "crm";
 
 const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
@@ -38,7 +38,8 @@ const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
   { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh, dokusuz (~9sn)", modelNameHint: "hunyuan3d-dit" },
   { id: "instantmesh", label: "InstantMesh — vertex-renkli ya da gerçek UV doku (~12sn, yüksek VRAM)", modelNameHint: "instant_mesh" },
-  { id: "trellis", label: "TRELLIS — gerçek dokulu, sparse-voxel (~28sn, en yüksek VRAM)", modelNameHint: "ss_flow_img_dit" },
+  { id: "trellis", label: "TRELLIS — gerçek dokulu, sparse-voxel (~28sn, yüksek VRAM)", modelNameHint: "ss_flow_img_dit" },
+  { id: "crm", label: "CRM — gerçek dokulu, iki aşamalı çoklu-görünüm (~40sn, en yüksek VRAM)", modelNameHint: "CRM" },
 ];
 
 const REMESH_OPTIONS: { id: string; label: string }[] = [
@@ -96,6 +97,9 @@ export default function MeshPanel() {
   const [trSteps, setTrSteps] = useState(25);
   const [trSimplify, setTrSimplify] = useState(0.95);
   const [trTextureSize, setTrTextureSize] = useState(1024);
+  // crm'e özgü
+  const [crmSteps, setCrmSteps] = useState(30);
+  const [crmScale, setCrmScale] = useState(5.0);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -214,10 +218,13 @@ export default function MeshPanel() {
       params.num_inference_steps = imSteps;
       params.view = imView;
       params.export_texmap = imExportTexmap;
-    } else {
+    } else if (family === "trellis") {
       params.num_inference_steps = trSteps;
       params.simplify = trSimplify;
       params.texture_size = trTextureSize;
+    } else {
+      params.num_inference_steps = crmSteps;
+      params.scale = crmScale;
     }
     try {
       await createJob("mesh", params);
@@ -325,10 +332,19 @@ export default function MeshPanel() {
             TRELLIS'in kendisi MIT/Apache-2.0. Ama gerçek dokulu çıktı için
             kullanılan bir bileşen (Gaussian doku pişirme) <strong>Inria/MPII
             Gaussian-Splatting Lisansı</strong> ile gelir — yalnızca araştırma/
-            değerlendirme amaçlı, TİCARİ KULLANIM YOK. Altı aile arasında{" "}
-            <strong>en yüksek VRAM</strong> kullanır (canlı ölçüm: ~11.6GB).
-            İlk kullanımda ayrıca bir DINOv2 kodlayıcı indirilir (Model
-            Manager'dan bağımsız, HF'den).
+            değerlendirme amaçlı, TİCARİ KULLANIM YOK. Yedi aile arasında{" "}
+            <strong>en yüksek VRAM kullananlardan biri</strong> (canlı ölçüm:
+            ~11.6GB). İlk kullanımda ayrıca bir DINOv2 kodlayıcı indirilir
+            (Model Manager'dan bağımsız, HF'den).
+          </p>
+        )}
+        {family === "crm" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            MIT (özel bir kullanım kısıtı yok). İki büyük difüzyon ağırlığı
+            (~6GB'ın her biri) aynı anda belleğe yükleniyor — ilk üretim
+            isteği diğer ailelerden belirgin daha yavaş başlar. Yedi aile
+            arasında <strong>en yüksek VRAM kullananlardan biri</strong>{" "}
+            (canlı ölçüm: ~13.6GB).
           </p>
         )}
 
@@ -378,7 +394,7 @@ export default function MeshPanel() {
             arka planı kaldır (rembg)
           </label>
         )}
-        {removeBg && family !== "trellis" && (
+        {removeBg && family !== "trellis" && family !== "crm" && (
           <div>
             <label>Önplan oranı: {foregroundRatio.toFixed(2)}</label>
             <input
@@ -593,6 +609,37 @@ export default function MeshPanel() {
                 step={512}
                 value={trTextureSize}
                 onChange={(e) => setTrTextureSize(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+          </>
+        )}
+        {family === "crm" && (
+          <>
+            <div>
+              <label>Difüzyon adım sayısı: {crmSteps}</label>
+              <input
+                type="range"
+                min={10}
+                max={50}
+                step={5}
+                value={crmSteps}
+                onChange={(e) => setCrmSteps(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={{ opacity: 0.6, margin: "2px 0 0" }}>
+                pixel + CCM/XYZ aşamalarının İKİSİ için de (upstream vars. 50)
+              </p>
+            </div>
+            <div>
+              <label>CFG ölçeği: {crmScale.toFixed(1)}</label>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={0.5}
+                value={crmScale}
+                onChange={(e) => setCrmScale(Number(e.target.value))}
                 style={{ width: "100%" }}
               />
             </div>
