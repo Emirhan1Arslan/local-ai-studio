@@ -918,8 +918,121 @@ Vendor: yalnızca `hy3dgen/shapegen/` (+ paket kökü `hy3dgen/__init__.py`)
 bırakıldı (yukarıdaki engel nedeniyle). Ayrıntı ve provenance:
 `vendor/hunyuan3d/NOTICE.md`.
 
-**Kademeli listenin geri kalanı (InstantMesh/TRELLIS/CRM) hâlâ engelli:**
-Hunyuan3D-2'nin shapegen/texgen ayrımı bu üçünde YOK — üçü de rasterizasyonu
-mesh çıkarımının kendisinde (yalnızca ayrı bir doku aşamasında değil)
-kullanıyor, dolayısıyla "yalnızca shape kısmını al" gibi bir bölünme mümkün
-değil. Bu üçü, CUDA Toolkit kurulmadıkça kapsam dışı kalmaya devam ediyor.
+**Kademeli listenin geri kalanı (InstantMesh/TRELLIS/CRM), bu yazıldığı an
+itibarıyla hâlâ engelli — AMA CUDA Toolkit artık kurulu (bkz. aşağıdaki
+bölüm), engel şu an "CUDA Toolkit yok" değil, sadece "adapter henüz
+yazılmadı".** Hunyuan3D-2'nin shapegen/texgen ayrımı bu üçünde YOK — üçü de
+rasterizasyonu mesh çıkarımının kendisinde (yalnızca ayrı bir doku
+aşamasında değil) kullanıyor, dolayısıyla "yalnızca shape kısmını al" gibi
+bir bölünme bunlar için mümkün değildi zaten — ama artık gerekmiyor da.
+
+## Faz 9 — CUDA Toolkit kuruldu: InstantMesh/TRELLIS/CRM engeli KALKTI
+
+Kullanıcı "evet kur" onayı verdi (2026-07-20). NVIDIA CUDA Toolkit 12.8.0
+Windows local installer'ı (`developer.download.nvidia.com/compute/cuda/
+12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe`, HEAD isteğiyle
+doğrulanan resmi NVIDIA CDN, 3.15GB) indirildi. Sürücü 576.88 zaten CUDA
+12.9'u destekliyordu (`nvidia-smi`), torch da cu128 ile derlenmişti — bu
+yüzden 12.8 toolkit sürümü seçildi.
+
+**Kurulum, elle (kullanıcı tarafından) yapıldı — UAC gerektiriyor:**
+installer'ın HERHANGİ bir çağrısı (hatta `-s -h` help metni bile) admin
+yükseltmesi istiyor, ben doğrudan tetikleyemedim. İlk `Start-Process -Verb
+RunAs` denemesi kullanıcı tarafından iptal edildi ("İşlem kullanıcı
+tarafından iptal edildi") — bunun üzerine kullanıcı installer'ı kendi
+yükseltilmiş PowerShell'inde elle çalıştırdı. Kurulum komutu, `Display.
+Driver` bileşenini BİLEREK dışarıda bıraktı (sürücü downgrade riskini
+önlemek için) — yalnızca derleyici + geliştirme kütüphaneleri:
+```
+cuda_12.8.0_571.96_windows.exe -s nvcc_12.8 cudart_12.8 cuobjdump_12.8 nvprune_12.8 nvdisasm_12.8 nvprof_12.8 cublas_12.8 cublas_dev_12.8 cufft_12.8 cufft_dev_12.8 curand_12.8 curand_dev_12.8 cusolver_12.8 cusolver_dev_12.8 cusparse_12.8 cusparse_dev_12.8 npp_12.8 npp_dev_12.8 nvjpeg_12.8 nvjpeg_dev_12.8 nvrtc_12.8 nvrtc_dev_12.8 nvml_dev_12.8 nvtx_12.8 visual_studio_integration_12.8 occupancy_calculator_12.8 thrust_12.8 cccl_12.8
+```
+Bileşen adları installer'ın kendi `-h`'ından DOĞRULANAMADI (yükseltme
+duvarına takıldı) — NVIDIA'nın CUDA 12.x Windows sessiz kurulum için
+belgelediği standart meta-paket adları kullanıldı. **Doğrulama:** `nvcc.exe
+--version` → 12.8.61 (`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\
+v12.8\bin\nvcc.exe`), `nvidia-smi --query-gpu=driver_version` → **576.88,
+DEĞİŞMEDİ**. `CUDA_PATH`/`CUDA_PATH_V12_8` sistem env değişkenleri ve
+PATH'e `...\v12.8\bin` doğru şekilde eklenmiş (yeni açılan process'ler
+görüyor — kurulumdan önce açık olan shell'ler görmüyor, beklenen davranış).
+
+**nvdiffrast canlı doğrulandı:** `pip install <yerel_klonlanmış_repo>`
+(PyPI'de nvdiffrast paketi YOK, GitHub'dan kaynak kurulumu gerekiyor) 26
+saniyede derlendi (`_nvdiffrast_c.cp310-win_amd64.pyd`, site-packages
+KÖKÜNE, `nvdiffrast/` alt paketine değil — normal davranış). Gerçek bir
+üçgeni `RasterizeCudaContext()` + `rasterize()` ile 64x64 çözünürlükte
+rasterize etti (1352 sıfır-olmayan piksel) — bu, önceden "ÇALIŞAMAZ" olarak
+belgelenen tam senaryo.
+
+**`custom_rasterizer_kernel` (Hunyuan3D-2 texgen) — gerçek bir MSVC 14.44 +
+CUDA 12.8 uyumsuzluğu bulundu ve düzeltildi:** İlk derleme denemesi AYNI
+`error C2872: 'std': belirsiz simge` hatasıyla `torch/csrc/dynamo/
+compiled_autograd.h` içinde patladı. Minimal bir tekrar-üretim testiyle
+(tek `.cu` dosyası, yalnızca `#include <torch/extension.h>` + boş kernel)
+sorunun SİSTEMİK olduğu doğrulandı — custom_rasterizer'ın kendi koduyla
+ilgisi yok, `torch/extension.h`'ı nvcc host-pass'ından derleyen HERHANGİ
+bir `.cu` dosyası bu hatayı alır. `nvdiffrast`'ın neden etkilenmediği
+incelendi: kendi `.cu` dosyaları torch header'larından tamamen bağımsız
+(dar CUDA/ATen include'ları), `torch/extension.h`'a ihtiyaç duyan TEK
+dosya (`PYBIND11_MODULE` makrosu için) düz bir `.cpp` — nvcc'den hiç
+geçmiyor, doğrudan `cl.exe` ile derleniyor. **Yerel düzeltme** (yalnızca
+vendor kopyasında, upstream'e gönderilmedi): `custom_rasterizer_kernel/
+rasterizer.h`'deki `#include <torch/extension.h>` → `#include <ATen/
+ATen.h>` + `#include <torch/types.h>` (dynamo'suz, hâlâ `torch::Tensor`
+sağlıyor); `rasterizer.cpp`'ye (PYBIND11_MODULE'ü barındıran, `.cu`
+DEĞİL) açıkça `#include <torch/extension.h>` geri eklendi. Ayrıca ayrı bir
+sorun: derin bir yoldan (`scratchpad\...\custom_rasterizer\`, 283 karakter)
+derleme `LINK : fatal error LNK1104: ... .lib dosyası açılamıyor` ile
+patladı — Windows MAX_PATH (260) aşımı, `.obj` dosyaları yazılabildi ama
+linker'ın `/IMPLIB:` çıktısı yazılamadı. Çözüm: kaynağı kısa bir yola
+(`C:\cr_build\`) kopyalayıp oradan derlemek (derlenen `.pyd` zaten site-
+packages'e gidiyor, build dizini kalıcı değil). Düzeltmeden sonra
+`custom_rasterizer_kernel.rasterize_image()` canlı test edildi: 64x64'te
+bir üçgen, 1250 sıfır-olmayan piksel.
+
+**Bu düzeltme GENELLENEBİLİR** — InstantMesh/TRELLIS/CRM kendi CUDA
+uzantılarını derlerken AYNI `torch/extension.h`+`.cu`+MSVC 14.44 hatasına
+çarparlarsa, aynı iki reçete (narrow include + kısa build yolu) uygulanmalı.
+
+**Hunyuan3D-2 texgen/paint — CUDA Toolkit engeli kalktı ama YENİ, farklı
+sınıftan bir engelle karşılaşıldı (upstream checkpoint/kod uyumsuzluğu):**
+`hy3dgen/texgen` tamamen vendor edildi (`vendor/hunyuan3d/hy3dgen/texgen`),
+`custom_rasterizer_kernel` ve `mesh_processor` ikisi de derlendi ve
+çalışıyor, delight (`Light_Shadow_Remover`, StableDiffusionInstructPix2Pix
+tabanlı) alt-pipeline'ı sorunsuz yükleniyor. Ama multiview diffusion
+alt-pipeline'ının UNet'i (`hunyuan3d-paint-v2-0-turbo/unet/modules.py`)
+`strict=True` ile state_dict yüklerken 36 fazla anahtarla patlıyor
+(`image_proj_model.*`, `*.attn2.to_{k,v}_ip.weight` — IP-Adapter
+bileşenleri) çünkü `modules.py` bu bileşenleri state_dict yüklemeden ÖNCE
+hiç oluşturmuyor. HuggingFace'teki GÜNCEL `main` dalı kopyasıyla
+karşılaştırıldı (WebFetch ile) — birebir aynı, hâlâ düzeltilmemiş bir
+upstream hatası, yerel/sürüm sorunu değil. IP-Adapter bağlantısını
+Tencent'in belgelenmemiş mimarisinden tahmin ederek yeniden inşa etmek
+(veya `strict=False` ile sessizce atlamak) yanlış/bozuk dokularla
+sonuçlanabilir, hiçbir hata vermeden — bu yüzden denenmedi.
+`adapters/mesh.py`'de `family="hunyuan3d"` hâlâ yalnızca shape üretiyor.
+Ayrıntı: `vendor/hunyuan3d/NOTICE.md`.
+
+**Bu arada çözülen, texgen'e özgü bir bağımlılık sorunu:** `diffusers`
+(shapegen için kurulan `0.39.0`) `0.32.2`'ye düşürüldü — 0.39.0'ın
+`diffusers.models.autoencoders` paketi eager olarak `AutoencoderRAE`'yi
+import ediyor, o da `transformers.Dinov2WithRegistersConfig` istiyor (çok
+yeni transformers, `transformers==5.14.1`'e zorlardı — TripoSR/SF3D/
+OpenLRM'in DINO/CLIP kodlayıcıları için çok riskli bir sıçrama). `0.32.2`,
+`envs/image`'de zaten `transformers==4.46.3` ile kanıtlanmış aynı çift —
+yukarı doğru sürüm kovalamak yerine bilinen-iyi bir eşleşme yeniden
+kullanıldı. `transformers` `4.42.3` → `4.46.3`'e (`peft>=0.17`'nin istediği
+`EncoderDecoderCache` için) + `tokenizers` → `0.20.3`'e (4.46.3'ün kendi
+alt sınırı) yükseltildi. Diffusers düşürüldükten sonra shapegen'in hâlâ
+sorunsuz import edildiği yeniden doğrulandı (regresyon kontrolü). **Torch-
+gölgeleme kazası bu süreçte İKİ KEZ daha oldu** (`accelerate`/`peft`
+çözümlemesi pinsiz CPU-only torch çekti) — ikisinde de `uv pip uninstall
+torch torchvision` ile düzeltildi, `2.11.0+cu128, True` yeniden doğrulandı.
+
+**Ayrıca çözülen, texgen'e özgü bir model-dosyası sorunu (vendor kodu
+DEĞİL, Model Manager indirmesi):** `hunyuan3d-paint-v2-0-turbo/unet/
+modules.py` (indirilen model klasöründeki kopya) `diffusion_pytorch_
+model.bin` (pickle) yüklemeyi bekliyordu ama projenin safetensors-tercih
+politikası gereği yalnızca `.safetensors` indirilmişti. Yerel yama: önce
+`.safetensors`'ı `safetensors.torch.load_file` ile dene, yoksa `.bin`'e
+düş. Diffusers'ın `~/.cache/huggingface/modules/diffusers_modules/`
+önbelleği de temizlendi (değişikliğin görülmesi için).

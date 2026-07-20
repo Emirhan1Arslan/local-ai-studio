@@ -609,10 +609,40 @@ docs/worker-envs.md'de.
 
 **Kademeli liste durumu:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
 (shape) canlı doğrulandı ve `MeshPanel.tsx`'e bağlandı — dört aile de
-`/v1/jobs` üzerinden gerçek GLB üretiyor. InstantMesh/TRELLIS/CRM, CUDA
-Toolkit kurulmadıkça kapsam dışı kalmaya devam ediyor (Hunyuan3D-2'nin
-shapegen/texgen ayrımı bu üçünde yok — rasterizasyon mesh çıkarımının
-kendisinde, bölünemiyor).
+`/v1/jobs` üzerinden gerçek GLB üretiyor.
+
+**CUDA Toolkit kuruldu (2026-07-20, kullanıcı onayı + elle kurulum —
+installer UAC gerektiriyor, doğrudan tetiklenemedi):** NVIDIA CUDA Toolkit
+12.8, `Display.Driver` bileşeni HARİÇ (sürücü 576.88'de değişmeden kaldı,
+`nvcc --version` → 12.8.61 ile doğrulandı). Bu, InstantMesh/TRELLIS/CRM'i
+bloke eden `nvdiffrast`/CUDA Toolkit engelini KALDIRDI —
+`nvdiffrast` canlı test edildi (gerçek `RasterizeCudaContext`+`rasterize()`
+JIT derlemesi ve çalıştırması). Ayrıca Hunyuan3D-2'nin `custom_rasterizer_
+kernel`'ini derlerken yeni, genellenebilir bir bulgu ortaya çıktı: MSVC
+14.44 (VS 2022 en güncel toolset) + CUDA 12.8, `torch/extension.h` içeren
+HERHANGİ bir `.cu` dosyasında `error C2872: 'std': belirsiz simge`
+üretiyor (nvdiffrast bunu `.cu` dosyalarını torch header'larından bağımsız
+tutarak zaten atlatmış) — düzeltme: `.cu` dosyaları `torch/extension.h`
+yerine dar `<ATen/ATen.h>`+`<torch/types.h>` kullanmalı, `PYBIND11_MODULE`
+gerektiren kod ayrı bir `.cpp`'ye taşınmalı (nvcc'den değil `cl.exe`'den
+geçiyor). InstantMesh/TRELLIS/CRM kendi uzantılarını derlerken aynı hatayı
+alırsa aynı reçete uygulanmalı. Ayrıntılar docs/worker-envs.md'de.
+
+**Hunyuan3D-2 texgen/paint — CUDA Toolkit engeli kalktı ama YENİ bir engelle
+karşılaşıldı:** `hy3dgen/texgen` tamamen vendor edildi, iki C++/CUDA
+uzantısı da (`custom_rasterizer_kernel`, `mesh_processor`) bu makinede
+derlendi ve çalışıyor. Ama `hunyuan3d-paint-v2-0-turbo` checkpoint'inin
+UNet'i, upstream'in kendi yükleme kodunun (`modules.py`) hiç oluşturmadığı
+36 IP-Adapter anahtarı içeriyor — `strict=True` state_dict yüklemesi bu
+yüzden patlıyor. HuggingFace `main` dalındaki GÜNCEL kopyasıyla
+karşılaştırılıp doğrulandı: yerel/sürüm sorunu değil, hâlâ düzeltilmemiş
+bir upstream hatası. Eksik IP-Adapter bağlantısını tahmin ederek yeniden
+kurmak riskli (sessizce bozuk/eksik dokularla sonuçlanabilir) — denenmedi.
+`family="hunyuan3d"` hâlâ yalnızca shape üretiyor. Ayrıntılar
+docs/worker-envs.md ve vendor/hunyuan3d/NOTICE.md'de.
+
+**Sıradaki adım:** InstantMesh/TRELLIS/CRM artık CUDA Toolkit açısından
+tractable — adapter'ları henüz yazılmadı, bu iş devam ediyor.
 
 ---
 

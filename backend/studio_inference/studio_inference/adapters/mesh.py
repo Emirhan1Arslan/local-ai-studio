@@ -2,20 +2,27 @@
 TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
 OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer) ve
 Hunyuan3D-2 (yalnızca shape — bkz. aşağı) desteklenen dört aile.
-InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de mesh çıkarımı için
-`nvdiffrast`'ın `RasterizeCudaContext`'ini zorunlu kılıyor, bu da (torchmcubes/
-texture_baker'ın aksine) ÇALIŞMA ZAMANINDA JIT CUDA derlemesi gerektiriyor —
-bu makinede NVIDIA CUDA Toolkit kurulu değil, bu üçü için de tek gerçek
-çözüm CUDA Toolkit kurmak (büyük, sistem geneli bir değişiklik — kullanıcı
-onayı olmadan yapılmadı). Ayrıntılar docs/worker-envs.md'de.
 
-Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi, texgen/paint
-(doku/boyama) kısmı eklenMEDİ: `hy3dgen/texgen/custom_rasterizer` de aynı
-nvdiffrast sınıfı engelle karşılaşıyor — `custom_rasterizer_kernel`,
-`torch.utils.cpp_extension.CUDAExtension` ile derlenen, CPU'ya düşmeyen
-(texture_baker/uv_unwrapper'ın aksine) zorunlu bir uzantı. Ayrıntılar
-vendor/hunyuan3d/NOTICE.md'de. Bu makinede Hunyuan3D-2 çıktısı dokusuz
-(vertex-renksiz) mesh'tir — triposr'ın ham çıktısıyla aynı sınıfta.
+NVIDIA CUDA Toolkit 12.8 bu makineye kuruldu (2026-07-20, kullanıcı elle
+çalıştırdı, Display.Driver bileşeni HARİÇ — sürücü 576.88'de değişmeden
+kaldı). Bu, önceki "nvdiffrast/CUDA Toolkit eksik" engelini KALDIRDI —
+`nvdiffrast` ve `custom_rasterizer_kernel` artık bu makinede gerçekten
+derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh/TRELLIS/CRM bu
+yüzden ARTIK teorik olarak tractable — henüz adapter yazılmadı (sıradaki
+iş), CUDA Toolkit engeli değil.
+
+Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi. texgen/paint
+(doku/boyama) kısmı VENDOR EDİLDİ (`vendor/hunyuan3d/hy3dgen/texgen`,
+`custom_rasterizer_kernel`/`mesh_processor` ikisi de bu makinede derlendi
+ve çalışıyor) ama adapter'a BAĞLANMADI: `hunyuan3d-paint-v2-0-turbo`'nun
+UNet checkpoint'i, yüklenen modelin sahip olmadığı 36 IP-Adapter anahtarı
+içeriyor (`image_proj_model.*`, `*.attn2.to_{k,v}_ip.weight`) —
+upstream'in kendi `modules.py`'si bu anahtarları oluşturmadan
+`strict=True` ile yüklemeye çalışıyor. HuggingFace'teki GÜNCEL ana dal
+kopyasıyla karşılaştırılıp doğrulandı: yerel/sürüm sorunu değil, hâlâ
+düzeltilmemiş bir upstream hatası. Ayrıntılar vendor/hunyuan3d/NOTICE.md'de.
+Bu makinede Hunyuan3D-2 çıktısı dokusuz (vertex-renksiz) mesh'tir —
+triposr'ın ham çıktısıyla aynı sınıfta.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
 hy3dgen/rembg/trimesh importları metod içindedir; API süreci bu modülü hiç
