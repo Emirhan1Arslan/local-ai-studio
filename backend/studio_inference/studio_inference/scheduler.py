@@ -48,6 +48,7 @@ _ENV_ALIAS: dict[str, str] = {
     "video": "image",
     "videotool": "image",
     "mesh": "3d",
+    "meshtool": "3d",
 }
 
 

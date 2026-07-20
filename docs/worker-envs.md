@@ -665,3 +665,36 @@ aynı desen. Model-Manager-kayıtlı yoldan (`models/3d/TripoSR/model.ckpt`,
 `MeshAdapter.load()`'daki `os.path.isfile→dirname` çözümlemesiyle) ikinci bir
 görselle (`hamburger.png`) uçtan uca tekrar canlı doğrulandı: 9.6sn, 55.599
 vertex/111.172 yüz.
+
+## Faz 9 adım 2-3 — meshtool (mesh işleme + export, envs/3d paylaşılıyor)
+
+`adapters/meshtool.py` (`MeshToolAdapter`) — imgtool.py/videotool.py ile aynı
+op-dispatch deseni, model gerektirmez (saf trimesh/CPU). Op'lar: `convert`
+(GLB/GLTF/OBJ/STL/PLY arası, uzantıya göre), `decimate` (`fast-simplification`
+paketiyle quadric decimation — `envs/3d`'ye eklendi), `repair` (fix_normals/
+fix_winding/fill_holes), `info` (dosya yazmadan vertices/faces/watertight/
+bounds/volume/area — bir STL'i slicer'a göndermeden sağlık kontrolü). `mesh`
+gibi `_ENV_ALIAS` ile `envs/3d`'ye yönlendiriliyor; `routes/jobs.py`'de
+`info` hariç tüm op'lar için otomatik `output_path` (.glb) üretimi var.
+
+**Bulgu — decimate sonrası watertight garantisi YOK:** Quadric decimation
+(84.156→16.830 yüz, chair.png meshi) sonrası mesh watertight olmaktan çıktı;
+otomatik onarım denemesi (trimesh `fix_winding`+`fix_normals`+`fill_holes`)
+BAŞARISIZ kaldı (euler_number=1, 6 "broken face" — muhtemelen decimation'ın
+ürettiği gerçek bir non-manifold kusur). Daha güçlü bir alternatif olarak
+`pymeshlab` canlı denendi (`meshing_remove_duplicate_faces/vertices`,
+`meshing_repair_non_manifold_edges`, `meshing_close_holes` filtreleri) — O DA
+bu spesifik kusuru çözemedi. Sonuç: `decimate` op'u best-effort onarım
+uyguluyor (çoğu durumda yeterli) ama GARANTİ etmiyor; `pymeshlab` işe
+yaramadığı ve kullanılmadığı için `envs/3d`'den kaldırıldı (kurulu
+bağımlılık şişmesin diye) — sonuçtaki `watertight` alanı her zaman gerçek
+durumu yansıtıyor, UI/çağıran taraf buna göre karar vermeli (ör. gerekirse
+`repair` op'unu ayrıca deneyebilir ya da kullanıcıyı uyarabilir). Bu,
+mesh basitleştirmenin genel olarak zor bir problemi — profesyonel araçlar
+(Netfabb/Meshmixer) bu yüzden var; kapsam dışı bırakıldı.
+
+**Canlı doğrulama:** `mesh_smoke.glb` (chair.png'den) üzerinde tüm 4 op
+test edildi — `convert`→STL (4.2MB)/OBJ (4.5MB)/PLY (1.8MB, hepsi doğru
+boyutlarda), `decimate` (yukarıdaki not), `repair` (zaten watertight bir
+mesh'te no-op gibi davrandı, beklenen), `info` (doğru vertices/faces/
+watertight/bounds/volume/area döndü).

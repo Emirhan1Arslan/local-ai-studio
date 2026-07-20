@@ -485,10 +485,24 @@ eklendi — diğer iş türleriyle aynı desen. Model-Manager-kayıtlı yoldan
 (`models/3d/TripoSR/model.ckpt`) ikinci bir görselle (hamburger.png) uçtan
 uca canlı tekrar doğrulandı: 9.6sn, 55.599 vertex/111.172 yüz.
 
-**Sıradaki adımlar:** Faz 9'un geri kalanı — mesh işleme (decimate/normal
-düzeltme/watertight kontrolü), export formatları (STL/PLY/FBX), 3D viewer
-(three.js/R3F), Görüntü→3D köprüsü, kademeli listenin sonraki modelleri
-(Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
+**Adım 2-3 (mesh işleme + export) canlı doğrulandı:** `adapters/meshtool.py`
+(imgtool/videotool ile aynı op-dispatch deseni, model gerektirmez) —
+`convert` (GLB/GLTF/OBJ/STL/PLY arası), `decimate` (quadric decimation,
+`fast-simplification`), `repair` (normal/winding düzeltme + delik doldurma),
+`info` (dosya yazmadan sağlık kontrolü — bir STL'i slicer'a göndermeden
+watertight/vertices/faces/hacim raporu). Tüm 4 op canlı test edildi
+(chair.png meshi üzerinde). **Bulunan gerçek sınır:** agresif decimation
+(84.156→16.830 yüz) sonrası watertight kaybı, ne trimesh'in ne de canlı
+denenen `pymeshlab`'ın onarım filtreleriyle tam çözülemedi — bu, mesh
+basitleştirmenin genel olarak çözülmemiş bir problemi (profesyonel araçların
+var olma sebebi), kapsam dışı bırakıldı. `decimate`/`repair` best-effort
+onarım uyguluyor ama garanti etmiyor; sonuçtaki `watertight` alanı gerçek
+durumu şeffafça raporluyor. Ayrıntılar docs/worker-envs.md'de.
+
+**Sıradaki adımlar:** FBX export (assimp/headless Blender köprüsü), 3D
+viewer (three.js/R3F, apps/desktop'ta frontend işi), Görüntü→3D köprüsü
+(Faz 4 çıktısını tek tıkla mesh job'una gönderme), kademeli listenin sonraki
+modelleri (Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
 
 ---
 
