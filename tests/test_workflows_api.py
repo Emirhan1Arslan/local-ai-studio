@@ -51,6 +51,34 @@ def test_get_unknown_workflow_404s(client):
     assert client.get("/v1/workflows/yok-boyle-id").status_code == 404
 
 
+def test_list_node_types_not_shadowed_by_workflow_id_route(client):
+    """'/node-types' ile '/{workflow_id}' aynı segment sayısına sahip — router
+    sıralaması yanlış olsaydı bu, 404 (workflow_id='node-types' aranır) dönerdi."""
+    r = client.get("/v1/workflows/node-types")
+    assert r.status_code == 200, r.text
+    types = {t["type_id"]: t for t in r.json()}
+    expected = {"core.prompt", "image.generate", "image.upscale", "image.bg_remove", "core.save"}
+    assert expected <= set(types)
+    gen = types["image.generate"]
+    assert {"name": "prompt", "type": "text", "required": True} in gen["inputs"]
+    assert any(p["name"] == "model_path" for p in gen["params"])
+
+
+def test_delete_workflow_with_runs_cascades(client, tmp_path):
+    """Regresyon: bir workflow'un run geçmişi varken silinmesi FK ihlaliyle
+    500 vermemeli — run'lar workflow ile birlikte cascade silinmeli."""
+    dest = str(tmp_path / "note.txt")
+    wf = client.post(
+        "/v1/workflows", json={"name": "silinecek", "graph": _prompt_save_graph(path=dest)}
+    ).json()
+    run = client.post(f"/v1/workflows/{wf['id']}/run", json={}).json()
+    _poll_run(client, run["id"])
+
+    r = client.delete(f"/v1/workflows/{wf['id']}")
+    assert r.status_code == 200, r.text
+    assert client.get(f"/v1/workflows/{wf['id']}").status_code == 404
+
+
 def test_create_rejects_unknown_node_type(client):
     graph = {"nodes": [{"id": "a", "type": "yok.boyle.tur"}], "edges": []}
     r = client.post("/v1/workflows", json={"name": "bozuk", "graph": graph})

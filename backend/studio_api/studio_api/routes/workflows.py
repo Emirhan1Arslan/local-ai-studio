@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -115,6 +116,36 @@ def _get_workflow_row(session, workflow_id: str) -> Workflow:
     if wf is None:
         raise ApiError(404, "not_found", f"workflow bulunamadı: {workflow_id}")
     return wf
+
+
+class PortSpecOut(BaseModel):
+    name: str
+    type: str
+    required: bool
+
+
+class ParamSpecOut(BaseModel):
+    name: str
+    type: str
+    default: Any = None
+    choices: tuple[str, ...] | None = None
+
+
+class NodeTypeOut(BaseModel):
+    type_id: str
+    category: str
+    label: str
+    inputs: list[PortSpecOut]
+    outputs: list[PortSpecOut]
+    params: list[ParamSpecOut]
+
+
+@router.get("/node-types")
+async def list_node_types() -> list[NodeTypeOut]:
+    """Node paleti + tip-uyumlu bağlantı doğrulaması için düğüm türü şemaları
+    (Faz 10 editör UI'ı bunu tüketir). `/{workflow_id}` ile aynı segment
+    sayısına sahip olduğundan router'da ondan ÖNCE tanımlanmalı."""
+    return [NodeTypeOut.model_validate(t, from_attributes=True) for t in NODE_TYPES.values()]
 
 
 @router.get("/{workflow_id}")

@@ -186,6 +186,10 @@ class Workflow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
+    runs: Mapped[list[WorkflowRun]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
+
 
 class WorkflowRunStatus(enum.StrEnum):
     RUNNING = "running"
@@ -210,3 +214,5 @@ class WorkflowRun(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="runs")
