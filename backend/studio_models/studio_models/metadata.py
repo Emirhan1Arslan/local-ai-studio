@@ -153,11 +153,13 @@ def group_key(path: Path, models_root: Path) -> str:
        bir diffusers pipeline'ı — LTX-Video gibi) o kök kazanır; iç bileşenlerin
        (ör. text_encoder/) kendi config.json'u olsa bile öncelik pipeline
        kökündedir.
-    2) Aksi halde, config.json'lı EN ÜST (models_root'a en yakın) ata klasör
-       kök olur — böylece Kokoro-82M/voices/*.pt gibi alt klasörlerdeki dosyalar
-       da (kendi config.json'ları olmasa bile) asıl modele dahil olur; XTTS-v2'nin
-       model.pth + speakers_xtts.pth'i gibi aynı klasördeki birden çok ağırlık
-       dosyası da böylece birleşir.
+    2) Aksi halde, config.json ya da config.yaml'lı EN ÜST (models_root'a en
+       yakın) ata klasör kök olur — böylece Kokoro-82M/voices/*.pt gibi alt
+       klasörlerdeki dosyalar da (kendi config'leri olmasa bile) asıl modele
+       dahil olur; XTTS-v2'nin model.pth + speakers_xtts.pth'i gibi aynı
+       klasördeki birden çok ağırlık dosyası da böylece birleşir (config.yaml
+       desteği TripoSR için Faz 9'da eklendi — birçok 3D model YAML config
+       kullanıyor).
     3) İkisi de yoksa dosyanın kendisi kendi grubudur (ör. lora/'daki tek
        başına bir LoRA dosyası)."""
     d = path.parent
@@ -180,7 +182,9 @@ def group_key(path: Path, models_root: Path) -> str:
             cur.relative_to(models_root)
         except ValueError:
             break
-        if cur != models_root and (cur / "config.json").exists():
+        if cur != models_root and (
+            (cur / "config.json").exists() or (cur / "config.yaml").exists()
+        ):
             best = cur
         if cur == models_root:
             break

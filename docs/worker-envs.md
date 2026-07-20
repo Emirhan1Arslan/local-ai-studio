@@ -638,3 +638,30 @@ doğrulandı: **watertight=True**, pozitif hacim/alan, makul sınır kutusu —
 scikit-image yamasının doğru geometri ürettiğinin kanıtı (bozuk bir
 marching-cubes eşlemesi neredeyse kesin non-watertight/self-intersecting
 bir mesh üretirdi).
+
+**Model Manager/Downloads Manager entegrasyonu:** İlk canlı testte TripoSR
+ağırlıkları `TSR.from_pretrained()`'in kendi `hf_hub_download` çağrısıyla
+`~/.cache/huggingface/hub`'a inmişti — projenin gerçek indirme kuyruğundan
+geçmemişti. Düzeltildi: `POST /v1/downloads/snapshot` ile (`repo_id=
+"stabilityai/TripoSR"`, `subdir="3d"`, `only_patterns=["config.yaml",
+"model.ckpt"]`) `models/3d/TripoSR/` altına indirildi — Wan/Hunyuan/Mochi ile
+aynı, önceki `HTTPAdapter` denemesi yerine kalıcı uygulama-içi indirme yolu.
+
+Bunun ortaya çıkardığı ayrı bir eksik: `metadata.py::group_key()`, çok
+dosyalı/tek-dosyalı bir modeli tek `ModelRecord`'a toplarken yalnızca
+`config.json`'lı klasörleri tanıyordu (LTX/Wan gibi diffusers pipeline'ları
+için yeterliydi) — TripoSR `config.yaml` kullandığı için `model.ckpt` kendi
+başına, "TripoSR" değil "model" adıyla bir kayıt oluyordu. `config.yaml`
+desteği eklendi (muhtemelen kademeli listenin diğer 3D modelleri de YAML
+config kullanacak); canlı doğrulandı — `GET /v1/models?kind=3d` artık doğru
+`{"name": "TripoSR", "kind": "3d", ...}` döndürüyor. (Not: scanner.py yalnızca
+dosya BOYUTU değiştiğinde metadata'yı yeniden çıkarıyor — bu kod değişikliği
+sonrası var olan kaydın adının güncellenmesi için tek seferlik bir DB
+silme+rescan gerekti, gelecekteki yeni indirmelerde otomatik doğru gelecek.)
+
+`routes/jobs.py::_create_job_row()`'a `mesh` iş türü için otomatik
+`output_path` üretimi eklendi (`outputs/<uuid>.glb`) — image/audio/video ile
+aynı desen. Model-Manager-kayıtlı yoldan (`models/3d/TripoSR/model.ckpt`,
+`MeshAdapter.load()`'daki `os.path.isfile→dirname` çözümlemesiyle) ikinci bir
+görselle (`hamburger.png`) uçtan uca tekrar canlı doğrulandı: 9.6sn, 55.599
+vertex/111.172 yüz.

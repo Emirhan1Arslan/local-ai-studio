@@ -110,6 +110,11 @@ def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
         settings.ensure_dirs()
         ext = str(params.get("format", "mp4") or "mp4")
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
+    elif kind == "mesh" and not params.get("output_path"):
+        settings = get_settings()
+        settings.ensure_dirs()
+        ext = str(params.get("format", "glb") or "glb")
+        params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.{ext}")
     # Faz 8 adım 2 — uzun iş yönetimi: video üretimi dakikalar sürebilir; istemci
     # açıkça bir öncelik belirtmediyse (vars. 0) hızlı iş türlerinin (görüntü/ses)
     # kuyrukta önüne geçmemesi için düşük öncelik sınıfına düşürülür.

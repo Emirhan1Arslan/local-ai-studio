@@ -471,12 +471,24 @@ olmadan yapılmadı; bunun yerine `tsr/models/isosurface.py`
 çözüldü (`huggingface-hub` çok eskiydi/`accelerate` ile uyuşmuyordu,
 `trimesh==4.0.5` NumPy 2.0 ile kırıktı) — ayrıntılar docs/worker-envs.md'de.
 
-**Sıradaki adımlar:** Model Manager/Downloads Manager entegrasyonu (şu an
-TripoSR ağırlıkları `hf_hub_download` ile kendi önbelleğine iniyor, projenin
-gerçek indirme kuyruğundan geçmiyor); job routing (`routes/jobs.py`) ve Faz
-9'un geri kalanı (mesh işleme, export formatları, 3D viewer, kademeli
-listenin sonraki modelleri — Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/
-OpenLRM-CRM).
+**Model Manager/Downloads Manager + job routing entegrasyonu (aynı gün
+tamamlandı):** TripoSR ağırlıkları artık `hf_hub_download`'ın kendi
+önbelleğine değil, projenin gerçek indirme kuyruğundan (`POST /v1/downloads/
+snapshot`, `subdir="3d"`) `models/3d/TripoSR/` altına iniyor. Bunun için
+`metadata.py::group_key()` genişletildi — önceden yalnızca `config.json`'lı
+klasörleri tek model olarak grupluyordu, `config.yaml` (TripoSR ve muhtemelen
+kademeli listenin diğer 3D modelleri bunu kullanıyor) tanınmıyordu; düzeltme
+sonrası model doğru "TripoSR" adıyla `kind=3d` altında tek kayıt olarak
+görünüyor (canlı doğrulandı: `GET /v1/models?kind=3d`). `routes/jobs.py`'ye
+`mesh` iş türü için otomatik `output_path` (.glb, `outputs/` altına) üretimi
+eklendi — diğer iş türleriyle aynı desen. Model-Manager-kayıtlı yoldan
+(`models/3d/TripoSR/model.ckpt`) ikinci bir görselle (hamburger.png) uçtan
+uca canlı tekrar doğrulandı: 9.6sn, 55.599 vertex/111.172 yüz.
+
+**Sıradaki adımlar:** Faz 9'un geri kalanı — mesh işleme (decimate/normal
+düzeltme/watertight kontrolü), export formatları (STL/PLY/FBX), 3D viewer
+(three.js/R3F), Görüntü→3D köprüsü, kademeli listenin sonraki modelleri
+(Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
 
 ---
 
