@@ -727,3 +727,72 @@ yüz) → FBX (2.58MB) → Blender'a GERİ import edildi: 42.076 vertex/84.156
 poly, birebir eşleşti. Bu aynı zamanda plan.md'nin DoD'sini ("FBX Blender'da
 import edilir") otomatik sağlıyor — Blender kendi ürettiği FBX'i sorunsuz
 okuyabiliyor.
+
+## Faz 9 — Stable Fast 3D (SF3D) ikinci aile olarak eklendi (dokulu çıktı)
+
+`adapters/mesh.py` TripoSR-özel tek-aile yapısından çok-aileli bir yapıya
+(video.py'nin `_FAMILIES` deseniyle aynı ruhta) refactor edildi —
+`family: "triposr" | "sf3d"`.
+
+**Bağımlılıklar (envs/3d'ye eklendi):** `jaxtyping==0.2.31`,
+`open_clip_torch==2.24.0`, `pynanoinstantmeshes==0.0.3`, `gpytoolbox==0.2.0`,
+`transformers==4.42.3` (TripoSR'ın 4.35.0'ından yükseltildi — canlı testte
+TripoSR'ın hâlâ sorunsuz çalıştığı doğrulandı, aynı `envs/3d` paylaşılıyor).
+
+**KRİTİK KAZA (ve düzeltmesi) — torch'u kazayla ezmek:** `open_clip_torch`/
+`timm` bağımlılık çözümü, pinlenmemiş bir `torch` isteyince uv PyPI'dan
+**CPU-only torch 2.13.0** indirip `envs/3d`'nin kendi site-packages'ına
+kurdu — bu, `--system-site-packages` ile miras alınması gereken korumalı
+sistem torch'unu (2.11.0+cu128, CUDA'lı) GÖLGELEDİ. `torch.cuda.is_available()
+→ False` ile fark edildi, `uv pip uninstall torch torchvision` ile düzeltildi
+(sistem torch'u zaten hiç değişmemişti, yalnızca envs/3d'nin ÜSTÜNE binen
+kopya kaldırıldı) — TripoSR canlı smoke testiyle CUDA'nın geri geldiği
+doğrulandı. **Ders:** paylaşılan `--system-site-packages` env'lere yeni
+paket eklerken `torch`/`torchvision` gibi büyük paketlerin transitive
+dependency olarak sessizce yeniden kurulmadığından HER SEFERİNDE emin
+olunmalı (`torch.cuda.is_available()` kontrolü kurulumdan hemen sonra).
+
+**İki C++ eklentisi (`texture_baker`, `uv_unwrapper`) CPU olarak derlendi**
+(`--no-build-isolation --no-deps`, `CMAKE_PREFIX_PATH` torch'un cmake
+dizinine ayarlanarak) — torchmcubes'un aksine bunlar CUDA_HOME yoksa
+`CUDAExtension` yerine `CppExtension`'a **zarifçe düşüyor** (setup.py'da
+`use_cuda = use_cuda and CUDA_HOME is not None`), yani derlemesi hiç
+sorun çıkarmadı.
+
+**SF3D marching cubes/`torchmcubes` KULLANMIYOR** — kendi marching
+TETRAHEDRA uygulaması var (`sf3d/models/isosurface.py`, saf PyTorch,
+önceden hesaplanmış `load/tets/160_tets.npz` ızgarası) — TripoSR'daki gibi
+bir yama gerekmedi.
+
+**Canlı testte bulunan iki gerçek hata:**
+1. SF3D `prepare_image()` RGBA bekliyor (alfa kanalı = maske) — TripoSR'ın
+   gri-arkaplana compose edilmiş düz RGB deseni SF3D'ye uygulanınca
+   `ValueError: Image must be in RGBA mode` verdi. Düzeltme: family'ye göre
+   dallandı — sf3d RGBA'da kalıyor, triposr gri-compose ediliyor.
+2. `texture_baker` CPU çekirdeği + SF3D'nin GPU'daki tensörleri ->
+   `NotImplementedError: Could not run 'texture_baker_cpp::rasterize' ...
+   CUDA backend`. Düzeltme: `TextureBaker.rasterize`/`interpolate`'i
+   çalışma zamanında monkeypatch'leyip (vendored `sf3d/system.py`'yi
+   DEĞİŞTİRMEDEN) girdileri CPU'ya taşıyıp sonucu orijinal cihaza geri
+   döndürüyoruz — sinir ağı çıkarımı yine GPU'da, yalnızca rasterizasyon
+   CPU'da.
+
+**LİSANS UYARISI:** Kod + ağırlıklar Stability AI Community License —
+XTTS-v2 ile aynı desende UI'da gösteriliyor (`MeshPanel.tsx`, family=sf3d
+seçiliyken).
+
+**Canlı doğrulama (gerçek Downloads/Model Manager yoluyla indirilen ağırlık,
+gerçek `/v1/jobs` API'si üzerinden — yalnızca standalone script değil):**
+portre fotoğrafından **15.6 sn'de** 17.152 vertex/30.700 yüz, gerçek
+`PBRMaterial` + 1024×1024 baked `baseColorTexture` ile GLB üretildi
+(`trimesh` ile doğrulandı: `visual.kind == "texture"`).
+
+**MeshPanel.tsx güncellendi:** aile seçici (TripoSR/SF3D), aileye özgü
+alanlar (triposr: mc_resolution; sf3d: texture_resolution/remesh/
+target_vertex_count), model listesi seçili aileye göre filtreleniyor, SF3D
+lisans notu.
+
+**Henüz eklenmedi (ağırlıklar `models/3d/` altında hazır, adapter kodu
+yok):** InstantMesh, TRELLIS-image-large, Hunyuan3D-2 (shape+paint),
+OpenLRM, CRM — her biri kendi özel çıkarım koduna göre (TripoSR/SF3D'de
+olduğu gibi) ayrı ayrı vendor edilip test edilmesi gerekiyor.

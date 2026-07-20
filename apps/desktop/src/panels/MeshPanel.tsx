@@ -1,6 +1,6 @@
 import { OrbitControls, Stage } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useLoader } from "@react-three/fiber";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
@@ -16,10 +16,22 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-// plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı) ilk model —
-// Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM henüz eklenmedi.
-type Family = "triposr";
-const FAMILIES: [Family, string][] = [["triposr", "TripoSR (hafif, hızlı)"]];
+// plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı) ve Stable
+// Fast 3D (dokulu/tekstürlü çıktı) canlı doğrulandı ve buraya bağlandı.
+// InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM/CRM ağırlıkları models/3d altında
+// hazır ama adapter kodu henüz yazılmadı (docs/worker-envs.md'de durum notu).
+type Family = "triposr" | "sf3d";
+
+const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
+  { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
+  { id: "sf3d", label: "Stable Fast 3D — dokulu/tekstürlü (~15sn)", modelNameHint: "stable-fast-3d" },
+];
+
+const REMESH_OPTIONS: { id: string; label: string }[] = [
+  { id: "none", label: "yok (ham çıktı)" },
+  { id: "triangle", label: "üçgen" },
+  { id: "quad", label: "dörtgen" },
+];
 
 type ExportFormat = "glb" | "obj" | "stl" | "ply" | "fbx";
 const EXPORT_FORMATS: ExportFormat[] = ["glb", "obj", "stl", "ply", "fbx"];
@@ -49,7 +61,13 @@ export default function MeshPanel() {
   const [srcImage, setSrcImage] = useState<{ path: string; url: string } | null>(null);
   const [parentAssetId, setParentAssetId] = useState("");
   const [removeBg, setRemoveBg] = useState(true);
+  const [foregroundRatio, setForegroundRatio] = useState(0.85);
+  // triposr'a özgü
   const [mcResolution, setMcResolution] = useState(256);
+  // sf3d'ye özgü
+  const [textureResolution, setTextureResolution] = useState(1024);
+  const [remesh, setRemesh] = useState("none");
+  const [targetVertexCount, setTargetVertexCount] = useState(-1);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -61,6 +79,15 @@ export default function MeshPanel() {
     {},
   );
   const lastEvent = useRef(0);
+
+  const activeFamily = FAMILIES.find((f) => f.id === family)!;
+
+  // Model Browser'daki 3D modelleri seçili aileye göre filtrele (isim ipucuyla) —
+  // yanlış aileye ait bir ağırlık dosyasının yanlışlıkla seçilmesini önler.
+  const familyModels = useMemo(
+    () => meshModels.filter((m) => m.name.toLowerCase().includes(activeFamily.modelNameHint.toLowerCase())),
+    [meshModels, activeFamily],
+  );
 
   const refresh = () => {
     fetchJobs()
@@ -83,6 +110,12 @@ export default function MeshPanel() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Aile değişince, o aileye ait olmayan bir model seçili kalmasın.
+  useEffect(() => {
+    setModelPath((cur) => (familyModels.some((m) => m.path === cur) ? cur : ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [family, meshModels]);
 
   // Görüntü→3D köprüsü (plan.md Faz 9 adım 5): GeneratePanel'den "3D'ye gönder"
   // ile gelen görsel — Asset Graph'ta türev olarak bağlanması için parent_asset_id
@@ -129,15 +162,23 @@ export default function MeshPanel() {
       setFormError("önce bir görsel seçin");
       return;
     }
+    const params: Record<string, unknown> = {
+      family,
+      model_path: modelPath,
+      image_path: srcImage.path,
+      remove_background: removeBg,
+      foreground_ratio: foregroundRatio,
+      ...(parentAssetId ? { parent_asset_id: parentAssetId } : {}),
+    };
+    if (family === "triposr") {
+      params.mc_resolution = mcResolution;
+    } else {
+      params.texture_resolution = textureResolution;
+      params.remesh = remesh;
+      params.target_vertex_count = targetVertexCount;
+    }
     try {
-      await createJob("mesh", {
-        family,
-        model_path: modelPath,
-        image_path: srcImage.path,
-        remove_background: removeBg,
-        mc_resolution: mcResolution,
-        ...(parentAssetId ? { parent_asset_id: parentAssetId } : {}),
-      });
+      await createJob("mesh", params);
       refresh();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -148,6 +189,9 @@ export default function MeshPanel() {
     const result = a.meta.result as { path?: string } | undefined;
     return result?.path ?? a.path;
   };
+
+  const familyOf = (a: AssetInfo): string =>
+    String((a.meta.params?.family as string) ?? (a.meta.result?.family as string) ?? "");
 
   const runTool = async (op: "convert" | "decimate" | "repair", format: ExportFormat) => {
     if (!selected) return;
@@ -175,7 +219,7 @@ export default function MeshPanel() {
     <div style={{ display: "flex", height: "100%", fontSize: 13 }}>
       <div
         style={{
-          width: 280,
+          width: 300,
           padding: 12,
           borderRight: "1px solid #333",
           overflowY: "auto",
@@ -185,29 +229,37 @@ export default function MeshPanel() {
         }}
       >
         <div>
-          <label>Aile</label>
+          <label>Model ailesi</label>
           <select
             value={family}
             onChange={(e) => setFamily(e.target.value as Family)}
             style={{ width: "100%" }}
           >
-            {FAMILIES.map(([f, label]) => (
-              <option key={f} value={f}>
-                {label}
+            {FAMILIES.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
               </option>
             ))}
           </select>
         </div>
 
+        {family === "sf3d" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            Stable Fast 3D ağırlıkları <strong>Stability AI Community License</strong> ile
+            gelir — araştırma/kişisel kullanım serbest; yıllık geliri 1M USD'yi aşan
+            kuruluşlar için ayrı bir Enterprise License gerekir.
+          </p>
+        )}
+
         <div>
-          <label>Model (boşsa HF'den iner)</label>
+          <label>Ağırlık (boşsa HF'den iner)</label>
           <select
             value={modelPath}
             onChange={(e) => setModelPath(e.target.value)}
             style={{ width: "100%" }}
           >
-            <option value="">— varsayılan —</option>
-            {meshModels.map((m) => (
+            <option value="">— varsayılan ({activeFamily.modelNameHint}) —</option>
+            {familyModels.map((m) => (
               <option key={m.id} value={m.path}>
                 {m.name}
               </option>
@@ -238,19 +290,79 @@ export default function MeshPanel() {
           <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
           arka planı kaldır (rembg)
         </label>
+        {removeBg && (
+          <div>
+            <label>Önplan oranı: {foregroundRatio.toFixed(2)}</label>
+            <input
+              type="range"
+              min={0.5}
+              max={1}
+              step={0.05}
+              value={foregroundRatio}
+              onChange={(e) => setForegroundRatio(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </div>
+        )}
 
-        <div>
-          <label>Marching cubes çözünürlüğü: {mcResolution}</label>
-          <input
-            type="range"
-            min={64}
-            max={384}
-            step={32}
-            value={mcResolution}
-            onChange={(e) => setMcResolution(Number(e.target.value))}
-            style={{ width: "100%" }}
-          />
-        </div>
+        {family === "triposr" ? (
+          <div>
+            <label>Marching cubes çözünürlüğü: {mcResolution}</label>
+            <input
+              type="range"
+              min={64}
+              max={384}
+              step={32}
+              value={mcResolution}
+              onChange={(e) => setMcResolution(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </div>
+        ) : (
+          <>
+            <div>
+              <label>Doku çözünürlüğü: {textureResolution}px</label>
+              <input
+                type="range"
+                min={512}
+                max={2048}
+                step={512}
+                value={textureResolution}
+                onChange={(e) => setTextureResolution(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label>Yeniden örgüleme (remesh)</label>
+              <select
+                value={remesh}
+                onChange={(e) => setRemesh(e.target.value)}
+                style={{ width: "100%" }}
+              >
+                {REMESH_OPTIONS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {remesh !== "none" && (
+              <div>
+                <label>Hedef vertex sayısı</label>
+                <input
+                  type="number"
+                  min={100}
+                  value={targetVertexCount === -1 ? "" : targetVertexCount}
+                  placeholder="otomatik"
+                  onChange={(e) =>
+                    setTargetVertexCount(e.target.value ? Number(e.target.value) : -1)
+                  }
+                  style={{ width: "100%" }}
+                />
+              </div>
+            )}
+          </>
+        )}
 
         <button onClick={generate} disabled={!!running}>
           {running ? "üretiliyor…" : "Üret"}
@@ -265,18 +377,22 @@ export default function MeshPanel() {
 
         <div>Geçmiş</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
-          {results.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => setSelected(a)}
-              style={{
-                textAlign: "left",
-                background: selected?.id === a.id ? "#2a4" : undefined,
-              }}
-            >
-              {meshPathOf(a).split(/[\\/]/).pop()}
-            </button>
-          ))}
+          {results.map((a) => {
+            const fam = familyOf(a);
+            return (
+              <button
+                key={a.id}
+                onClick={() => setSelected(a)}
+                style={{
+                  textAlign: "left",
+                  background: selected?.id === a.id ? "#2a4" : undefined,
+                }}
+                title={fam ? `aile: ${fam}` : undefined}
+              >
+                {meshPathOf(a).split(/[\\/]/).pop()}
+              </button>
+            );
+          })}
         </div>
       </div>
 

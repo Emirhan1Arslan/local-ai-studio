@@ -545,9 +545,29 @@ doğrulandı: gerçek bir portre görselinden (`kind=image` asset) mesh job'u
 tetiklendi, sonuçtaki mesh asset'inin `parent_id`'si kaynak görselin
 asset id'siyle birebir eşleşti.
 
-**Sıradaki adımlar:** Kademeli listenin sonraki modelleri (Stable Fast 3D/
-InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM) — her biri TripoSR'a benzer
-araştırma+vendoring eforu gerektiriyor.
+**Kademeli listenin ikinci modeli — Stable Fast 3D (SF3D) canlı doğrulandı:**
+`mesh.py` çok-aileli yapıya (`family: triposr | sf3d`) refactor edildi.
+SF3D, TripoSR'ın vertex-renkli çıktısının aksine **gerçek dokulu/tekstürlü**
+mesh üretiyor (PBRMaterial + baked texture atlası). Yolda üç ayrı gerçek
+sorun bulunup çözüldü: (1) `open_clip_torch`/`timm` bağımlılık çözümü
+kazayla korumalı sistem torch'unu (2.11.0+cu128) `envs/3d`'ye özel CPU-only
+bir torch 2.13.0 ile GÖLGELEDİ — fark edilip `torch.cuda.is_available()`
+kontrolüyle doğrulanarak düzeltildi (TripoSR'ın hâlâ çalıştığı yeniden test
+edildi); (2) SF3D'nin `prepare_image()`'ı RGBA bekliyor, TripoSR'ın gri-
+compose deseni yanlış aileye uygulanmıştı; (3) SF3D'nin iki C++ eklentisi
+(`texture_baker`/`uv_unwrapper`) CUDA Toolkit olmadığı için CPU'ya derlendi
+(torchmcubes'un aksine zarifçe düştüler) ama modelin GPU tensörleriyle
+çakıştı — çalışma zamanı monkeypatch'iyle köprülendi. `MeshPanel.tsx`'e aile
+seçici + her aileye özgü alanlar (texture_resolution/remesh/vertex_count
+sf3d'ye, mc_resolution triposr'a) + SF3D'nin Stability AI Community License
+uyarısı eklendi. Canlı doğrulama: gerçek `/v1/jobs` API'si üzerinden bir
+portre fotoğrafından 15.6sn'de 17.152 vertex/30.700 yüz, gerçek PBR
+doku ile. Ayrıntılar docs/worker-envs.md'de.
+
+**Sıradaki adımlar:** Kademeli listenin kalan modelleri (InstantMesh/
+TRELLIS/Hunyuan3D-2 [shape+paint]/OpenLRM/CRM) — ağırlıkları `models/3d/`
+altında hazır, her biri TripoSR/SF3D'ye benzer ayrı bir vendoring+adapter
+eforu gerektiriyor.
 
 ---
 
