@@ -3,10 +3,11 @@ name = "studio-workflows"
 version = "0.1.0"
 description = "Local AI Studio — Tipli graph executor + node kütüphanesi (Faz 10)"
 requires-python = ">=3.11"
-dependencies = ["studio-core"]
+dependencies = ["studio-core", "studio-inference"]
 
 [tool.uv.sources]
 studio-core = { workspace = true }
+studio-inference = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

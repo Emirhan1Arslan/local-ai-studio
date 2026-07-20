@@ -42,10 +42,14 @@ class ParamSpec:
 @dataclass(frozen=True)
 class JobDispatch:
     """Mevcut Job sistemine dispatch: `kind` iş türü, `build_params` node
-    girdilerinden/parametrelerinden job `params` sözlüğüne eşleme yapar."""
+    girdilerinden/parametrelerinden job `params` sözlüğüne eşleme yapar.
+    `map_output`, ham `job.result`'ı düğümün beyan ettiği çıkış portu adlarına
+    çevirir (verilmezse `job.result` doğrudan çıktı olarak kullanılır — tek
+    portlu, isim eşleşen basit node'lar için yeterli)."""
 
     kind: str
     build_params: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+    map_output: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 class InlineFn(Protocol):

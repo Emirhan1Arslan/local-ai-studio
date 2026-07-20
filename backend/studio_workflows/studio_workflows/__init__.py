@@ -1,5 +1,7 @@
 """studio_workflows — tipli graph executor + node kütüphanesi (Faz 10)."""
 
+from . import node_library  # noqa: F401 - yan etki: gerçek node türlerini NODE_TYPES'a kaydeder
+from .dispatch import JobDispatchError, make_job_dispatcher
 from .executor import (
     NodeExecutionError,
     NodeResult,
@@ -25,6 +27,7 @@ __all__ = [
     "Graph",
     "GraphValidationError",
     "JobDispatch",
+    "JobDispatchError",
     "NodeExecutionError",
     "NodeInstance",
     "NodeResult",
@@ -35,6 +38,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowRunResult",
     "derive_seed",
+    "make_job_dispatcher",
     "port_types_compatible",
     "register_node_type",
 ]

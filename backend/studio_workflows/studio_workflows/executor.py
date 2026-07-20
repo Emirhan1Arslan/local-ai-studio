@@ -158,7 +158,8 @@ class WorkflowExecutor:
                     "job_dispatcher tanımlı değil, JobDispatch node çalıştırılamaz",
                 )
             job_params = strategy.build_params(inputs, params)
-            return self.job_dispatcher(strategy, job_params)
+            job_result = self.job_dispatcher(strategy, job_params)
+            return strategy.map_output(job_result) if strategy.map_output else job_result
         if callable(strategy):
             return strategy(inputs, params)
         raise NodeExecutionError(node_type.type_id, "yürütme stratejisi tanımlı değil")

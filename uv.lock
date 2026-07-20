@@ -963,10 +963,14 @@ version = "0.1.0"
 source = { editable = "backend/studio_workflows" }
 dependencies = [
     { name = "studio-core" },
+    { name = "studio-inference" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "studio-core", editable = "backend/studio_core" }]
+requires-dist = [
+    { name = "studio-core", editable = "backend/studio_core" },
+    { name = "studio-inference", editable = "backend/studio_inference" },
+]
 
 [[package]]
 name = "typing-extensions"
