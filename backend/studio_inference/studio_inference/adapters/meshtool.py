@@ -10,7 +10,10 @@ params:
 
 convert:
 - mesh_path (zorunlu) · output_path (zorunlu — uzantı hedef formatı belirler:
-  .glb/.gltf/.obj/.stl/.ply)
+  .glb/.gltf/.obj/.stl/.ply doğrudan trimesh ile; .fbx Blender köprüsüyle
+  (kurulu olması gerekir — bkz. _blender_bridge.py, docs/worker-envs.md).
+  decimate/repair op'larının output_path'i de .fbx olabilir, aynı köprüyü
+  kullanır.
 
 decimate:
 - mesh_path · output_path (ikisi de zorunlu)
@@ -96,7 +99,23 @@ class MeshToolAdapter:
 
     def _export(self, mesh, output_path: str) -> None:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
-        mesh.export(output_path)
+        if output_path.lower().endswith(".fbx"):
+            # trimesh Autodesk'in kapalı FBX formatını yazamıyor — Blender
+            # köprüsü kullanılır (bkz. _blender_bridge.py): önce geçici bir
+            # GLB'ye export edilir, Blender onu FBX'e çevirir.
+            import tempfile
+
+            from studio_inference.adapters._blender_bridge import export_fbx
+
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
+                tmp_glb = tmp.name
+            try:
+                mesh.export(tmp_glb)
+                export_fbx(tmp_glb, output_path)
+            finally:
+                os.unlink(tmp_glb)
+        else:
+            mesh.export(output_path)
 
     def _convert(self, params: dict) -> Iterator[dict]:
         mesh_path = self._mesh_path(params)

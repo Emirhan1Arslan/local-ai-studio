@@ -698,3 +698,32 @@ test edildi — `convert`→STL (4.2MB)/OBJ (4.5MB)/PLY (1.8MB, hepsi doğru
 boyutlarda), `decimate` (yukarıdaki not), `repair` (zaten watertight bir
 mesh'te no-op gibi davrandı, beklenen), `info` (doğru vertices/faces/
 watertight/bounds/volume/area döndü).
+
+## Faz 9 — FBX export (headless Blender köprüsü, plan.md DoD maddesi)
+
+trimesh Autodesk'in kapalı FBX formatını yazamıyor; pyassimp'in FBX
+export'u güvenilmez (canlı test edilmedi — dokümantasyon/topluluk
+raporları tutarlı şekilde eksik/bozuk export'lardan bahsediyor). Bu
+makinede **Blender 5.0.1 zaten kurulu** (`C:\Program Files\Blender
+Foundation\Blender 5.0\blender.exe`) — kurulum gerekmeden doğrudan
+kullanıldı.
+
+**Mimari:** `adapters/_blender_scripts/mesh_to_fbx.py` — Blender'ın KENDİ
+Python'unda (`bpy`, worker env'inin torch/trimesh'i YOK) `blender
+--background --python mesh_to_fbx.py -- --input X --output Y.fbx` olarak
+çalışır; glb/gltf/obj/ply/stl içe aktarıp FBX dışa aktarıyor.
+`adapters/_blender_bridge.py::export_fbx()` bu subprocess'i worker env'inden
+çağırıyor — `find_blender_exe()` sırayla `STUDIO_BLENDER_PATH` ortam
+değişkenini, PATH'i, sonra `Program Files\Blender Foundation\Blender
+*\blender.exe` glob'unu dener (Ollama köprüsüyle aynı "opsiyonel dış
+kurulum" deseni — Blender bulunamazsa RIFE gibi sessizce atlanmıyor,
+anlaşılır bir hata mesajı veriyor). `meshtool.py::_export()`'a entegre
+edildi: `output_path` `.fbx` ile bitiyorsa mesh önce geçici bir GLB'ye
+export edilip köprüden geçiyor — `convert`/`decimate`/`repair` op'larının
+HEPSİ doğrudan `.fbx` çıktısı üretebiliyor.
+
+**Canlı doğrulama (round-trip):** `mesh_smoke.glb` (42.076 vertex/84.156
+yüz) → FBX (2.58MB) → Blender'a GERİ import edildi: 42.076 vertex/84.156
+poly, birebir eşleşti. Bu aynı zamanda plan.md'nin DoD'sini ("FBX Blender'da
+import edilir") otomatik sağlıyor — Blender kendi ürettiği FBX'i sorunsuz
+okuyabiliyor.

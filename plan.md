@@ -499,10 +499,20 @@ var olma sebebi), kapsam dışı bırakıldı. `decimate`/`repair` best-effort
 onarım uyguluyor ama garanti etmiyor; sonuçtaki `watertight` alanı gerçek
 durumu şeffafça raporluyor. Ayrıntılar docs/worker-envs.md'de.
 
-**Sıradaki adımlar:** FBX export (assimp/headless Blender köprüsü), 3D
-viewer (three.js/R3F, apps/desktop'ta frontend işi), Görüntü→3D köprüsü
-(Faz 4 çıktısını tek tıkla mesh job'una gönderme), kademeli listenin sonraki
-modelleri (Stable Fast 3D/InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
+**FBX export canlı doğrulandı (DoD maddesi tamamlandı):** Bu makinede zaten
+kurulu olan Blender 5.0.1 headless köprüsüyle (`adapters/_blender_bridge.py`
++ `_blender_scripts/mesh_to_fbx.py`) — trimesh FBX yazamadığı ve pyassimp'in
+FBX export'u güvenilmez olduğu için tercih edildi. `meshtool.py`'nin
+convert/decimate/repair op'larının hepsi artık `.fbx` çıktısı üretebiliyor.
+Round-trip doğrulandı: GLB (42.076 vertex/84.156 yüz) → FBX (2.58MB) →
+Blender'a geri import edildi, birebir eşleşti — "FBX Blender'da import
+edilir" DoD'si bununla otomatik sağlanmış oluyor. Blender kurulu değilse
+(farklı bir makinede) anlaşılır bir hata veriyor, sessizce atlanmıyor.
+
+**Sıradaki adımlar:** 3D viewer (three.js/R3F, apps/desktop'ta frontend işi),
+Görüntü→3D köprüsü (Faz 4 çıktısını tek tıkla mesh job'una gönderme),
+kademeli listenin sonraki modelleri (Stable Fast 3D/InstantMesh/TRELLIS/
+Hunyuan3D-2/OpenLRM-CRM).
 
 ---
 
