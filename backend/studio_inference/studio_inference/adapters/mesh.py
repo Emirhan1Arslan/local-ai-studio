@@ -1,16 +1,29 @@
 """Mesh (3D) adapter'ı (Faz 9): Image-to-3D — kademeli liste (plan.md adım 1).
 TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
 OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer),
-Hunyuan3D-2 (yalnızca shape — bkz. aşağı) ve InstantMesh (LRM+FlexiCubes,
-zero123plus çoklu-görünüm difüzyonu üzerine) desteklenen beş aile.
+Hunyuan3D-2 (yalnızca shape — bkz. aşağı), InstantMesh (LRM+FlexiCubes,
+zero123plus çoklu-görünüm difüzyonu üzerine) ve TRELLIS (sparse-voxel
+yapı + structured latent, gerçek dokulu çıktı) desteklenen altı aile.
 
 NVIDIA CUDA Toolkit 12.8 bu makineye kuruldu (2026-07-20, kullanıcı elle
 çalıştırdı, Display.Driver bileşeni HARİÇ — sürücü 576.88'de değişmeden
 kaldı). Bu, önceki "nvdiffrast/CUDA Toolkit eksik" engelini KALDIRDI —
 `nvdiffrast` ve `custom_rasterizer_kernel` artık bu makinede gerçekten
-derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh bu sayede eklendi.
-TRELLIS/CRM da artık teorik olarak tractable — henüz adapter yazılmadı
-(sıradaki iş), CUDA Toolkit engeli değil.
+derleniyor ve çalışıyor (canlı doğrulandı). InstantMesh ve TRELLIS bu
+sayede eklendi. CRM da artık teorik olarak tractable — henüz adapter
+yazılmadı (sıradaki iş), CUDA Toolkit engeli değil.
+
+TRELLIS'in `flash_attn`/`xformers` gereksinimi bu makinede İKİSİ de
+ÇALIŞMIYOR (flash_attn'in resmi Windows wheel'i yok; xformers'ın derlenmiş
+çekirdekleri RTX 5090/sm_120'yi henüz desteklemiyor — "too new" hatası) —
+TRELLIS'in kendi dense-attention modülünde zaten var olan 'sdpa' seçeneğini
+sparse (voxel) attention modülüne de PORTLADIK (aynı matematik, farklı
+çekirdek — model ağırlığı/davranışıyla ilgisi yok, yalnızca hangi PyTorch
+fonksiyonunun çağrıldığıyla ilgili). `kaolin` de gerekli DEĞİL — TRELLIS
+paketinin kendisi hiç kullanmıyor, yalnızca vendored FlexiCubes alt
+modülünün bir şekil-doğrulama yardımcısı (`check_tensor`) için import
+ediliyordu, yerel bir eşdeğerle değiştirildi. Ayrıntılar
+vendor/trellis/NOTICE.md'de.
 
 Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi. texgen/paint
 (doku/boyama) kısmı VENDOR EDİLDİ (`vendor/hunyuan3d/hy3dgen/texgen`,
@@ -26,12 +39,12 @@ Bu makinede Hunyuan3D-2 çıktısı dokusuz (vertex-renksiz) mesh'tir —
 triposr'ın ham çıktısıyla aynı sınıfta.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
-hy3dgen/src(instantmesh)/rembg/trimesh importları metod içindedir; API
-süreci bu modülü hiç yüklemez.
+hy3dgen/src(instantmesh)/trellis/rembg/trimesh importları metod içindedir;
+API süreci bu modülü hiç yüklemez.
 
-Beş ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
+Altı ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
 `vendor/stablefast3d`, `vendor/openlrm`, `vendor/hunyuan3d`,
-`vendor/instantmesh`) — bkz. ilgili NOTICE.md dosyaları.
+`vendor/instantmesh`, `vendor/trellis`) — bkz. ilgili NOTICE.md dosyaları.
 
 **LİSANS UYARISI:** stable-fast-3d → Stability AI Community License
 (araştırma/kişisel serbest, yıllık geliri 1M USD'yi aşan kuruluşlar için
@@ -39,16 +52,18 @@ Enterprise License gerekir — XTTS-v2 ile aynı desen, bkz. audio.py).
 openlrm → CC-BY-NC-4.0 (yalnızca araştırma/kişisel, TİCARİ KULLANIM YOK).
 hunyuan3d → Tencent Hunyuan 3D 2.0 Community License (AB/UK/Güney Kore
 hariç her yerde serbest; aylık 1M aktif kullanıcıyı aşan ürünler için
-Tencent'ten ayrı lisans gerekir). TripoSR/instantmesh MIT/Apache-2.0 (özel
-uyarı gerekmez).
+Tencent'ten ayrı lisans gerekir). TripoSR/instantmesh/trellis MIT/Apache-2.0
+(özel uyarı gerekmez).
 
 params:
-- family: triposr (vars.) | sf3d | openlrm | hunyuan3d | instantmesh
+- family: triposr (vars.) | sf3d | openlrm | hunyuan3d | instantmesh | trellis
 - image_path: girdi görsel (zorunlu)
 - model_path: Model Browser'dan seçilen ağırlık dosyası ya da HF repo id
   (boşsa ailenin varsayılan HF repo'su kullanılır — ilk kullanımda ağdan iner)
 - remove_background: bool (vars. True) — rembg ile arkaplan temizliği
+  (trellis kendi ön işlemesini kendi yapar, bkz. aşağı — bu bayrağı okumaz)
 - foreground_ratio: 0-1 (vars. 0.85) — yalnızca remove_background=true iken
+  (trellis DIŞINDAKİ aileler için)
 
 triposr'a özgü:
 - mc_resolution: marching cubes ızgara çözünürlüğü (vars. 256)
@@ -78,6 +93,14 @@ instantmesh'e özgü:
   UV dokusu üretir (yavaş); False ise vertex-renkli mesh (hızlı, upstream
   varsayılanı)
 
+trellis'e özgü:
+- num_inference_steps: hem sparse-structure hem structured-latent
+  örnekleyicisi için adım sayısı (vars. 25, upstream varsayılanı)
+- seed: rastgelelik tohumu (vars. 42)
+- simplify: mesh basitleştirmede kaldırılacak yüz oranı (vars. 0.95 —
+  upstream varsayılanı; ham çıktı çok yoğun)
+- texture_size: doku atlası çözünürlüğü (vars. 1024)
+
 output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı seçer)
 """
 
@@ -96,6 +119,7 @@ _FAMILY_VENDOR_DIR = {
     "openlrm": os.path.join(_VENDOR_BASE, "openlrm"),
     "hunyuan3d": os.path.join(_VENDOR_BASE, "hunyuan3d"),
     "instantmesh": os.path.join(_VENDOR_BASE, "instantmesh"),
+    "trellis": os.path.join(_VENDOR_BASE, "trellis"),
 }
 _FAMILY_DEFAULT_REPO = {
     "triposr": "stabilityai/TripoSR",
@@ -103,6 +127,7 @@ _FAMILY_DEFAULT_REPO = {
     "openlrm": "zxhezexin/openlrm-mix-base-1.1",
     "hunyuan3d": "tencent/Hunyuan3D-2",
     "instantmesh": "TencentARC/InstantMesh",
+    "trellis": "microsoft/TRELLIS-image-large",
 }
 
 # Tek-adımlı bir ileri geçiş (diffusion değil, adım sayısı yok) — RTX 5090'da
@@ -125,6 +150,11 @@ _ESTIMATE_SECONDS = {
     # yerine) — diffusion adım sayısıyla ~doğrusal ölçeklenen kısma göre
     # ekstrapole edildi.
     "instantmesh": 12.0,
+    # canlı ölçüldü (yüklü model): num_inference_steps=25, formats=[mesh,
+    # gaussian], texture_size=1024 ile 27.8sn — çoğu süre 100 görünümlük
+    # gaussian render + doku pişirmede (to_glb), yalnızca sparse-structure/
+    # slat örneklemesi ~7sn.
+    "trellis": 28.0,
 }
 
 
@@ -310,6 +340,35 @@ def _load_instantmesh(repo: str, device: str) -> dict:
     return {"pipeline": pipeline, "model": recon_model, "infer_config": config.infer_config}
 
 
+def _load_trellis(repo: str, device: str):
+    """`repo`, Model Manager'daki bir ckpt dosyasının klasörüdür
+    (`_resolve_repo` dosya->dirname çeviriyor) — TRELLIS'in 8 bileşen
+    checkpoint'i `<TRELLIS-image-large>/ckpts/*.safetensors` altında, ama
+    `pipeline.json` (from_pretrained'in aradığı) bir üst klasörde. Model
+    Manager her checkpoint'i ayrı bir dosya olarak kaydettiği için
+    `_resolve_repo` bizi `ckpts/`'e getirir — burada bir üst seviyeye
+    çıkıyoruz.
+
+    ATTN_BACKEND/SPCONV_ALGO env değişkenleri `trellis` paketinin İLK
+    import'undan ÖNCE ayarlanmalı (modül seviyesinde okunuyorlar, bkz.
+    vendor/trellis/trellis/modules/sparse/__init__.py) — flash_attn'in
+    Windows wheel'i yok, xformers'ın derlenmiş çekirdekleri RTX 5090/sm_120'yi
+    henüz desteklemiyor, bu yüzden 'sdpa' zorunlu (yerel patch, bkz.
+    vendor/trellis/NOTICE.md)."""
+    if os.path.basename(os.path.normpath(repo)) == "ckpts":
+        repo = os.path.dirname(os.path.normpath(repo))
+
+    os.environ.setdefault("SPCONV_ALGO", "native")
+    os.environ["ATTN_BACKEND"] = "sdpa"
+
+    from trellis.pipelines import TrellisImageTo3DPipeline
+
+    pipeline = TrellisImageTo3DPipeline.from_pretrained(repo)
+    if device == "cuda":
+        pipeline.cuda()
+    return pipeline
+
+
 def _resolve_repo(model_path: str, family: str) -> str:
     repo = model_path or _FAMILY_DEFAULT_REPO[family]
     # Model Browser tekil bir ağırlık dosyası verebilir (config.yaml/.ckpt/
@@ -365,6 +424,8 @@ class MeshAdapter:
             model = _load_hunyuan3d_pipeline(repo, device)
         elif family == "instantmesh":
             model = _load_instantmesh(repo, device)
+        elif family == "trellis":
+            model = _load_trellis(repo, device)
         else:
             raise AssertionError("unreachable")
 
@@ -398,11 +459,15 @@ class MeshAdapter:
 
         yield _progress("görsel hazırlanıyor…")
         image = Image.open(image_path).convert("RGBA")
-        if remove_bg:
+        if remove_bg and family != "trellis":
             import rembg
 
             image = _remove_background(image, rembg.new_session())
             image = _resize_foreground(image, foreground_ratio)
+        # trellis: kendi preprocess_image()'ı rembg + DINOv2 için gereken
+        # özel 518x518 bbox-crop'u BİRLİKTE yapıyor — paylaşılan resize_
+        # foreground'la karıştırmak bu formatı bozar, bkz. aşağıdaki
+        # pipeline.run(..., preprocess_image=True) çağrısı.
         if family == "triposr":
             # TripoSR gri arkaplana compose edilmiş düz RGB bekliyor.
             arr = np.array(image).astype(np.float32) / 255.0
@@ -559,6 +624,33 @@ class MeshAdapter:
                     [[-1, 0, 0], [0, 1, 0], [0, 0, -1]], dtype=np.float32
                 )
                 mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=vertex_colors)
+        elif family == "trellis":
+            from trellis.utils import postprocessing_utils
+
+            num_inference_steps = int(params.get("num_inference_steps", 25))
+            seed = int(params.get("seed", 42))
+            simplify = float(params.get("simplify", 0.95))
+            texture_size = int(params.get("texture_size", 1024))
+
+            yield _progress(
+                f"sparse yapı + structured latent örneklemesi ({num_inference_steps} adım)…"
+            )
+            outputs = self._model.run(
+                image,
+                seed=seed,
+                sparse_structure_sampler_params={"steps": num_inference_steps},
+                slat_sampler_params={"steps": num_inference_steps},
+                formats=["mesh", "gaussian"],
+                preprocess_image=True,
+            )
+            yield _progress("mesh dışa aktarılıyor (gaussian'dan doku pişirme)…")
+            mesh = postprocessing_utils.to_glb(
+                outputs["gaussian"][0],
+                outputs["mesh"][0],
+                simplify=simplify,
+                texture_size=texture_size,
+                verbose=False,
+            )
         else:
             raise AssertionError("unreachable")
 
@@ -602,6 +694,11 @@ class MeshAdapter:
             # ağır: zero123plus tam bir SD1.5-boyutlu UNet+VAE+CLIP+vision_
             # encoder taşıyor, LRM triplane/FlexiCubes bunun üstüne biniyor.
             return 16_000
+        if family == "trellis":
+            # Canlı ölçüldü — num_inference_steps=25, formats=[mesh,gaussian],
+            # texture_size=1024 ile tepe VRAM 11583MB (100 görünümlük
+            # gaussian render + doku pişirme dahil).
+            return 12_000
         return 4_000
 
 

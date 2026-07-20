@@ -659,10 +659,33 @@ belirgin daha ağır (zero123plus tam SD1.5-boyutlu bir difüzyon modeli
 taşıyor). Lisansı Apache-2.0, özel UI uyarısı gerekmiyor. Ayrıntılar
 docs/worker-envs.md ve vendor/instantmesh/NOTICE.md'de.
 
+**TRELLIS altıncı aile olarak canlı doğrulandı (sparse-voxel + gerçek
+Gaussian-pişirmeli doku):** Kademeli listenin en karmaşık üyesiydi
+(`setup.sh` kaolin/flash-attn/xformers/mip-splatting gibi ağır CUDA
+bağımlılıkları listeliyordu) ama gerçek kod taraması çoğunun gereksiz
+olduğunu ortaya çıkardı: kaolin hiç kullanılmıyor (yalnızca vendored
+FlexiCubes'un bir şekil-doğrulama yardımcısı için — yerel eşdeğerle
+değiştirildi), flash_attn/xformers ikisi de bu makinede çalışmıyor
+(flash_attn'in Windows wheel'i yok, xformers'ın çekirdekleri RTX 5090/
+Blackwell'i henüz desteklemiyor — test edilerek doğrulandı) — TRELLIS'in
+kendi dense-attention modülünde zaten var olan 'sdpa' seçeneği sparse
+(voxel) attention'a portlandı (aynı matematik, farklı çekirdek — model
+davranışını etkilemiyor). Ayrıca geç keşfedilen bir gizli bağımlılık:
+doku pişirme (`to_glb`) aslında mip-splatting'in `diff-gaussian-
+rasterization` CUDA uzantısını GECİKMELİ import ediyor — klonlanıp
+(Hunyuan3D-2'nin `custom_rasterizer`'ında bulunanla AYNI MSVC 14.44 +
+`torch/extension.h` hatasıyla karşılaşılıp aynı düzeltmeyle) derlendi.
+Bu bileşen **Inria/MPII Gaussian-Splatting Lisansı** (yalnızca araştırma,
+TİCARİ KULLANIM YOK) taşıyor, UI'da gösteriliyor. Checkpoint yükleme
+Hunyuan3D-2'nin aksine sorunsuz geçti. Canlı doğrulama (gerçek `/v1/jobs`
+API'si): 9.862 vertex/15.750 yüz, gerçek pişirilmiş doku materyali; VRAM
+tepe noktası 11.583MB — altı aile arasında en yüksek. Ayrıntılar
+docs/worker-envs.md ve vendor/trellis/NOTICE.md'de.
+
 **Kademeli liste durumu:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
-(shape), InstantMesh — beş aile canlı doğrulandı ve `MeshPanel.tsx`'e
-bağlandı. **Sıradaki adım:** TRELLIS/CRM artık CUDA Toolkit açısından
-tractable — adapter'ları henüz yazılmadı, bu iş devam ediyor.
+(shape), InstantMesh, TRELLIS — altı aile canlı doğrulandı ve
+`MeshPanel.tsx`'e bağlandı. **Sıradaki adım:** CRM artık CUDA Toolkit
+açısından tractable — adapter'ı henüz yazılmadı, bu iş devam ediyor.
 
 ---
 

@@ -1093,6 +1093,88 @@ StableDiffusionPipeline` alt sınıfı) `vendor/instantmesh/`'e kopyalandı, kod
 değişikliği yapılmadı. Lisans: Apache-2.0 (özel UI uyarısı gerekmiyor,
 TripoSR'la aynı muamele). Ayrıntı: `vendor/instantmesh/NOTICE.md`.
 
-**Kademeli listenin geri kalanı (TRELLIS/CRM):** CUDA Toolkit engeli
-kalktığı için artık teorik olarak tractable — henüz adapter yazılmadı, bu
-iş devam ediyor.
+## Faz 9 — TRELLIS altıncı aile olarak eklendi (sparse-voxel, gerçek doku)
+
+En karmaşık kademeli liste üyesi — `setup.sh` kaolin/flash-attn/xformers/
+diffoctreerast/mip-splatting gibi ağır CUDA bağımlılıkları listeliyordu,
+ama gerçek kod taraması bunların çoğunun GEREKSİZ olduğunu ortaya çıkardı:
+
+- **kaolin GEREKSİZ:** `trellis/` paketi hiç import etmiyor — yalnızca
+  vendored FlexiCubes alt modülünün (`.gitmodules` üzerinden ayrıca
+  fetch edilen bir git submodule, `MaxtirError/FlexiCubes`) bir şekil-
+  doğrulama yardımcısı (`check_tensor`, yalnızca `assert` içinde
+  kullanılıyor) için import ediliyordu — 8 satırlık yerel bir eşdeğerle
+  değiştirildi.
+- **flash_attn/xformers İKİSİ DE ÇALIŞMIYOR bu makinede** (test edilerek
+  doğrulandı, varsayılmadı): flash_attn'in resmi Windows wheel'i yok;
+  `pip install xformers` unpinned bir torch==2.13.0 çekti (yine torch-
+  gölgeleme kazası, `uv pip uninstall` ile düzeltildi), derlenen sürüm
+  gerçek bir attention çağrısında `requires device with capability <=
+  (9, 0) but your GPU has capability (12, 0) (too new)` hatası verdi —
+  RTX 5090/Blackwell henüz desteklenmiyor. TRELLIS'in kendi DENSE
+  attention modülünde zaten var olan `'sdpa'` seçeneğini SPARSE (voxel)
+  attention modülüne PORTLADIK — paketlenmiş değişken-uzunluklu diziyi
+  max uzunluğa sıfır-doldurup bool mask'le `torch.nn.functional.
+  scaled_dot_product_attention` çağırmak, sonra tekrar paketlemek
+  (xformers/flash_attn'in zaten yaptığı işin elle yapılmış hâli — aynı
+  matematik, farklı çekirdek). `full_attn.py`'de (flow/diffusion
+  modelleri, varsayılan `attn_mode="full"`, indirilen checkpoint
+  config'lerinde teyit edildi) VE `windowed_attn.py`'de (mesh decoder'ın
+  GERÇEKTEN kullandığı — "hiç çağrılmıyor" varsayımı yanlış çıktı, gerçek
+  bir `UnboundLocalError` ile bulundu) gerçek sdpa implementasyonu
+  yazıldı; `serialized_attn.py`'de yalnızca import-zamanı çökmeyi önleyen
+  bir guard (bu pipeline'da hiç çağrılmadığı doğrulandı).
+- **`xformers` sonunda TAMAMEN kaldırıldı** — yalnızca işe yaramamakla
+  kalmıyor, `facebookresearch/dinov2` torch.hub kodunun (TRELLIS'in
+  görüntü koşullandırma modeli) kendi xformers kullanımını da bozuyordu
+  (TRELLIS'in ATTN_BACKEND'inden bağımsız, Meta'nın kendi kodu) — dinov2
+  zaten temiz bir `try/except ImportError` yedeğine sahip, xformers
+  paketi tamamen kaldırılınca o yedek devreye giriyor.
+- **spconv ÇALIŞIYOR** — `spconv-cu120` (kendi CUDA 12.0 runtime'ını
+  taşıyor, sistem CUDA Toolkit'inden bağımsız) canlı test edildi, gerçek
+  bir `SubMConv3d` forward geçişi çalıştı.
+- **diff-gaussian-rasterization (mip-splatting) — GEÇ keşfedilen bir
+  gizli bağımlılık:** `trellis/renderers/gaussian_render.py`'nin üst
+  seviye import'ları saf PyTorch (CUDA uzantısı YOK gibi görünüyordu) —
+  ama `GaussianRenderer.render()` fonksiyon GÖVDESİNDE gecikmeli bir
+  import var, yalnızca doku pişirme sırasında (`to_glb()`'nin 100
+  görünümlük gaussian render'ı) tetikleniyor. İlk okumada kaçırıldı,
+  gerçek bir traceback'te bulundu. `autonomousvision/mip-splatting`
+  klonlanıp `submodules/diff-gaussian-rasterization` derlendi — AYNI
+  MSVC 14.44 + `torch/extension.h` + `.cu` hatası (bkz. Hunyuan3D-2
+  `custom_rasterizer` notu) `rasterize_points.cu`/`.h`'de tekrar
+  çıktı, aynı narrow-include düzeltmesiyle giderildi; `ext.cpp`
+  (PYBIND11_MODULE'ü barındıran, nvcc'den geçmeyen tek `.cpp`) zaten
+  kendi `torch/extension.h`'ına sahipti, değişmedi. **LİSANS UYARISI:**
+  bu bileşen Inria/MPII Gaussian-Splatting Lisansı — yalnızca araştırma/
+  değerlendirme, TİCARİ KULLANIM YOK (OpenLRM'in CC-BY-NC-4.0'ıyla aynı
+  muamele, UI'da gösteriliyor).
+- **`open3d` atlandı:** `trellis/pipelines/__init__.py` upstream'de hem
+  image hem text-to-3D pipeline'ını eager import ediyor, text pipeline
+  yalnızca open3d (~500MB) gerektiriyor ve bu adapter yalnızca image-to-3D
+  destekliyor (diğer beş aileyle aynı desen) — text import'u kaldırıldı.
+- **Checkpoint yükleme sorunsuz:** Hunyuan3D-2'nin IP-Adapter sorununun
+  AKSİNE, TRELLIS'in her checkpoint'i (`ss_flow_img_dit`, `slat_flow_
+  img_dit`, `ss_dec_conv3d`, `slat_decoder_mesh`, `slat_decoder_gs`)
+  ilk denemede `strict=True` ile sorunsuz yüklendi.
+
+**Canlı doğrulama (gerçek `/v1/jobs` API'si üzerinden):**
+`num_inference_steps=25, formats=[mesh,gaussian], texture_size=1024,
+simplify=0.95` ile 9.862 vertex/15.750 yüz, gerçek pişirilmiş
+`TextureVisuals` materyali doğrulandı. VRAM tepe noktası (ısınmış model,
+ikinci çağrı): **11.583MB** — altı aile arasında en yüksek. Isınmış
+model süresi ~28sn (çoğu 100-görünümlük gaussian render + doku pişirmede,
+~18sn; difüzyon örneklemesinin kendisi yalnızca ~7sn). İlk kullanımda
+ayrıca ~130sn'lik bir `facebookresearch/dinov2` torch.hub indirmesi var
+(bu tahmine dahil değil, OpenLRM/InstantMesh'in DINO notlarıyla aynı
+desen).
+
+Vendor: `trellis/` (MIT) + `trellis/representations/mesh/flexicubes/`
+(Apache-2.0, ayrıca fetch edilen submodule) + `third_party/diff-gaussian-
+rasterization/` (Inria/MPII NC lisansı) hepsi `vendor/trellis/`'e
+kopyalandı. Ayrıntı ve tüm yerel yamaların tam listesi:
+`vendor/trellis/NOTICE.md`.
+
+**Kademeli listenin geri kalanı (CRM):** CUDA Toolkit engeli kalktığı
+için artık teorik olarak tractable — henüz adapter yazılmadı, bu iş
+devam ediyor.

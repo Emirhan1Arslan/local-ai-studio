@@ -18,16 +18,19 @@ import { useStudio } from "../state";
 
 // plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı), Stable
 // Fast 3D (dokulu/tekstürlü çıktı), OpenLRM (vertex-renkli, yüksek çözünürlük),
-// Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh) ve InstantMesh
-// (LRM+FlexiCubes, zero123plus çoklu-görünüm difüzyonu üzerine) canlı
-// doğrulandı ve buraya bağlandı. NVIDIA CUDA Toolkit 2026-07-20'de kuruldu
-// (bkz. docs/worker-envs.md) — bu, InstantMesh'i bloke eden nvdiffrast
-// engelini kaldırdı. TRELLIS/CRM henüz eklenMEDİ (adapter yazılmadı, artık
+// Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh), InstantMesh
+// (LRM+FlexiCubes, zero123plus çoklu-görünüm difüzyonu üzerine) ve TRELLIS
+// (sparse-voxel yapı + gerçek Gaussian-pişirmeli doku) canlı doğrulandı ve
+// buraya bağlandı. NVIDIA CUDA Toolkit 2026-07-20'de kuruldu (bkz.
+// docs/worker-envs.md) — bu, InstantMesh/TRELLIS'i bloke eden nvdiffrast/
+// xformers/flash_attn engellerini kaldırdı (TRELLIS'in sparse attention'ı
+// için upstream'in kendi 'sdpa' desenini genişlettik — bkz.
+// vendor/trellis/NOTICE.md). CRM henüz eklenMEDİ (adapter yazılmadı, artık
 // CUDA Toolkit engeli değil). Hunyuan3D-2'nin texgen/paint (doku/boyama)
 // kısmı ayrı, farklı bir engelle karşılaştı — upstream'in checkpoint'i
 // kendi yükleme kodunun oluşturmadığı IP-Adapter anahtarları içeriyor
 // (ayrıntı: vendor/hunyuan3d/NOTICE.md).
-type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d" | "instantmesh";
+type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d" | "instantmesh" | "trellis";
 
 const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
@@ -35,6 +38,7 @@ const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
   { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh, dokusuz (~9sn)", modelNameHint: "hunyuan3d-dit" },
   { id: "instantmesh", label: "InstantMesh — vertex-renkli ya da gerçek UV doku (~12sn, yüksek VRAM)", modelNameHint: "instant_mesh" },
+  { id: "trellis", label: "TRELLIS — gerçek dokulu, sparse-voxel (~28sn, en yüksek VRAM)", modelNameHint: "ss_flow_img_dit" },
 ];
 
 const REMESH_OPTIONS: { id: string; label: string }[] = [
@@ -88,6 +92,10 @@ export default function MeshPanel() {
   const [imSteps, setImSteps] = useState(50);
   const [imView, setImView] = useState<4 | 6>(6);
   const [imExportTexmap, setImExportTexmap] = useState(false);
+  // trellis'e özgü
+  const [trSteps, setTrSteps] = useState(25);
+  const [trSimplify, setTrSimplify] = useState(0.95);
+  const [trTextureSize, setTrTextureSize] = useState(1024);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -202,10 +210,14 @@ export default function MeshPanel() {
     } else if (family === "hunyuan3d") {
       params.num_inference_steps = numInferenceSteps;
       params.octree_resolution = octreeResolution;
-    } else {
+    } else if (family === "instantmesh") {
       params.num_inference_steps = imSteps;
       params.view = imView;
       params.export_texmap = imExportTexmap;
+    } else {
+      params.num_inference_steps = trSteps;
+      params.simplify = trSimplify;
+      params.texture_size = trTextureSize;
     }
     try {
       await createJob("mesh", params);
@@ -308,6 +320,17 @@ export default function MeshPanel() {
             indirilir (Model Manager'dan bağımsız, HF'den).
           </p>
         )}
+        {family === "trellis" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            TRELLIS'in kendisi MIT/Apache-2.0. Ama gerçek dokulu çıktı için
+            kullanılan bir bileşen (Gaussian doku pişirme) <strong>Inria/MPII
+            Gaussian-Splatting Lisansı</strong> ile gelir — yalnızca araştırma/
+            değerlendirme amaçlı, TİCARİ KULLANIM YOK. Altı aile arasında{" "}
+            <strong>en yüksek VRAM</strong> kullanır (canlı ölçüm: ~11.6GB).
+            İlk kullanımda ayrıca bir DINOv2 kodlayıcı indirilir (Model
+            Manager'dan bağımsız, HF'den).
+          </p>
+        )}
 
         <div>
           <label>Ağırlık (boşsa HF'den iner)</label>
@@ -344,11 +367,18 @@ export default function MeshPanel() {
           )}
         </div>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
-          arka planı kaldır (rembg)
-        </label>
-        {removeBg && (
+        {family === "trellis" ? (
+          <p style={{ opacity: 0.6, margin: 0 }}>
+            TRELLIS arka plan temizliğini kendi ön işlemesinde (DINOv2 için gereken
+            518x518 kırpma ile birlikte) otomatik yapar — ayrı bir ayar yok.
+          </p>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} />
+            arka planı kaldır (rembg)
+          </label>
+        )}
+        {removeBg && family !== "trellis" && (
           <div>
             <label>Önplan oranı: {foregroundRatio.toFixed(2)}</label>
             <input
@@ -520,6 +550,52 @@ export default function MeshPanel() {
             {!imExportTexmap && (
               <p style={{ opacity: 0.6, margin: 0 }}>kapalıyken vertex-renkli, hızlı çıktı (upstream varsayılanı)</p>
             )}
+          </>
+        )}
+        {family === "trellis" && (
+          <>
+            <div>
+              <label>Örnekleme adım sayısı: {trSteps}</label>
+              <input
+                type="range"
+                min={10}
+                max={50}
+                step={5}
+                value={trSteps}
+                onChange={(e) => setTrSteps(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={{ opacity: 0.6, margin: "2px 0 0" }}>
+                hem sparse-yapı hem structured-latent örneklemesi için (upstream vars. 25)
+              </p>
+            </div>
+            <div>
+              <label>Basitleştirme oranı: {trSimplify.toFixed(2)}</label>
+              <input
+                type="range"
+                min={0}
+                max={0.99}
+                step={0.05}
+                value={trSimplify}
+                onChange={(e) => setTrSimplify(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={{ opacity: 0.6, margin: "2px 0 0" }}>
+                kaldırılacak yüz oranı — ham çıktı çok yoğun, upstream vars. 0.95
+              </p>
+            </div>
+            <div>
+              <label>Doku çözünürlüğü: {trTextureSize}px</label>
+              <input
+                type="range"
+                min={512}
+                max={2048}
+                step={512}
+                value={trTextureSize}
+                onChange={(e) => setTrTextureSize(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
           </>
         )}
 
