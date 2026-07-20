@@ -25,6 +25,15 @@ interface TauriGlobal {
   };
 }
 
+/** Görüntü→3D köprüsü (plan.md Faz 9 adım 5): bir panelden gönderilen görsel,
+ * dockview panelleri arasında paylaşılan bağlam olmadığı için burada taşınır —
+ * MeshPanel bunu tüketip srcImage'ı önceden doldurur. */
+export interface MeshBridgeRequest {
+  assetId: string;
+  path: string;
+  url: string;
+}
+
 interface StudioState {
   connected: boolean;
   version: string;
@@ -32,6 +41,9 @@ interface StudioState {
   events: StudioEvent[];
   /** model.* olayı geldikçe artar; Model Browser bunu izleyip yeniden yükler. */
   modelsVersion: number;
+  pendingMeshImage: MeshBridgeRequest | null;
+  sendToMesh: (req: MeshBridgeRequest) => void;
+  consumeMeshRequest: () => void;
 }
 
 const Ctx = createContext<StudioState>({
@@ -40,6 +52,9 @@ const Ctx = createContext<StudioState>({
   info: null,
   events: [],
   modelsVersion: 0,
+  pendingMeshImage: null,
+  sendToMesh: () => undefined,
+  consumeMeshRequest: () => undefined,
 });
 
 export function useStudio(): StudioState {
@@ -52,6 +67,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [events, setEvents] = useState<StudioEvent[]>([]);
   const [modelsVersion, setModelsVersion] = useState(0);
+  const [pendingMeshImage, setPendingMeshImage] = useState<MeshBridgeRequest | null>(null);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -127,7 +143,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ connected, version, info, events, modelsVersion }}>
+    <Ctx.Provider
+      value={{
+        connected,
+        version,
+        info,
+        events,
+        modelsVersion,
+        pendingMeshImage,
+        sendToMesh: setPendingMeshImage,
+        consumeMeshRequest: () => setPendingMeshImage(null),
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

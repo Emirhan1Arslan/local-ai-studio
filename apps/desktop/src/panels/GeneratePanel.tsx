@@ -132,7 +132,7 @@ function MaskEditor({
 }
 
 export default function GeneratePanel() {
-  const { events, connected } = useStudio();
+  const { events, connected, sendToMesh } = useStudio();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loraModels, setLoraModels] = useState<ModelInfo[]>([]);
   const [loras, setLoras] = useState<LoraPick[]>([]);
@@ -689,6 +689,13 @@ export default function GeneratePanel() {
                   }}
                 >
                   ⤴ kaynak al
+                </button>
+                <button
+                  className="regen"
+                  title="Bu görselden 3D mesh üret (3D panelinde açılır)"
+                  onClick={() => sendToMesh({ path: a.path, url, assetId: a.id })}
+                >
+                  ➜ 3D'ye gönder
                 </button>
               </div>
             </figure>

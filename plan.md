@@ -531,9 +531,23 @@ doğru şekilde yeniden kuruldu.)
 bu dilimde kapsam dışı bırakıldı, temel viewer (orbit/wireframe/ışık) öncelik
 aldı.
 
-**Sıradaki adımlar:** Görüntü→3D köprüsü (Faz 4 çıktısını tek tıkla mesh
-job'una gönderme), kademeli listenin sonraki modelleri (Stable Fast 3D/
-InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM).
+**Görüntü→3D köprüsü canlı doğrulandı (adım 5 tamamlandı):** Backend'de ek
+kod GEREKMEDİ — `register_asset_for_job()` zaten iş türünden bağımsız genel
+bir mekanizma (`job.params.parent_asset_id` okuyup Asset Graph'ta `parent_id`
+kuruyor, img2img/inpaint zincirinde kullanılan aynı alan) — mesh job'ları da
+otomatik olarak destekliyor. Yapılan iş salt frontend: dockview panelleri
+birbirinin state'ini görmediği için `state.tsx`'e paylaşılan bir köprü
+eklendi (`pendingMeshImage` + `sendToMesh()`/`consumeMeshRequest()`);
+GeneratePanel'in galeri kartlarına "➜ 3D'ye gönder" düğmesi eklendi
+(mevcut "⤴ kaynak al" ile aynı üslup); MeshPanel bunu tüketip `srcImage`'ı
+önceden dolduruyor ve üretim job'una `parent_asset_id` geçiyor. Canlı
+doğrulandı: gerçek bir portre görselinden (`kind=image` asset) mesh job'u
+tetiklendi, sonuçtaki mesh asset'inin `parent_id`'si kaynak görselin
+asset id'siyle birebir eşleşti.
+
+**Sıradaki adımlar:** Kademeli listenin sonraki modelleri (Stable Fast 3D/
+InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM-CRM) — her biri TripoSR'a benzer
+araştırma+vendoring eforu gerektiriyor.
 
 ---
 

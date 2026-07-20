@@ -40,13 +40,14 @@ function MeshModel({ url, wireframe }: { url: string; wireframe: boolean }) {
 }
 
 export default function MeshPanel() {
-  const { events } = useStudio();
+  const { events, pendingMeshImage, consumeMeshRequest } = useStudio();
 
   // Üretim
   const [family, setFamily] = useState<Family>("triposr");
   const [meshModels, setMeshModels] = useState<ModelInfo[]>([]);
   const [modelPath, setModelPath] = useState("");
   const [srcImage, setSrcImage] = useState<{ path: string; url: string } | null>(null);
+  const [parentAssetId, setParentAssetId] = useState("");
   const [removeBg, setRemoveBg] = useState(true);
   const [mcResolution, setMcResolution] = useState(256);
 
@@ -83,6 +84,16 @@ export default function MeshPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Görüntü→3D köprüsü (plan.md Faz 9 adım 5): GeneratePanel'den "3D'ye gönder"
+  // ile gelen görsel — Asset Graph'ta türev olarak bağlanması için parent_asset_id
+  // üretim job'una geçiliyor (register_asset_for_job zaten bunu okuyor).
+  useEffect(() => {
+    if (!pendingMeshImage) return;
+    setSrcImage({ path: pendingMeshImage.path, url: pendingMeshImage.url });
+    setParentAssetId(pendingMeshImage.assetId);
+    consumeMeshRequest();
+  }, [pendingMeshImage, consumeMeshRequest]);
+
   useEffect(() => {
     let needsRefresh = false;
     for (let i = lastEvent.current; i < events.length; i++) {
@@ -103,6 +114,7 @@ export default function MeshPanel() {
 
   const pickImage = async (file: File) => {
     setFormError("");
+    setParentAssetId(""); // elle seçilen görsel Asset Graph'a bağlı değil
     try {
       const up = await uploadImageFile(file);
       setSrcImage({ path: up.path, url: URL.createObjectURL(file) });
@@ -124,6 +136,7 @@ export default function MeshPanel() {
         image_path: srcImage.path,
         remove_background: removeBg,
         mc_resolution: mcResolution,
+        ...(parentAssetId ? { parent_asset_id: parentAssetId } : {}),
       });
       refresh();
     } catch (e) {
@@ -215,6 +228,9 @@ export default function MeshPanel() {
               alt=""
               style={{ width: "100%", marginTop: 6, borderRadius: 4 }}
             />
+          )}
+          {parentAssetId && (
+            <div style={{ opacity: 0.6, marginTop: 4 }}>Üretim panelinden gönderildi</div>
           )}
         </div>
 
