@@ -17,17 +17,20 @@ import {
 import { useStudio } from "../state";
 
 // plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı), Stable
-// Fast 3D (dokulu/tekstürlü çıktı) ve OpenLRM (vertex-renkli, yüksek çözünürlük)
-// canlı doğrulandı ve buraya bağlandı. InstantMesh/TRELLIS/CRM eklenMEDİ —
-// üçü de nvdiffrast'ın RasterizeCudaContext'ini zorunlu kılıyor, bu makinede
-// kurulu olmayan NVIDIA CUDA Toolkit gerektiriyor (docs/worker-envs.md'de
-// ayrıntı). Hunyuan3D-2 (shape+paint) henüz eklenmedi.
-type Family = "triposr" | "sf3d" | "openlrm";
+// Fast 3D (dokulu/tekstürlü çıktı), OpenLRM (vertex-renkli, yüksek çözünürlük)
+// ve Hunyuan3D-2 (yalnızca shape — dokusuz, yoğun mesh) canlı doğrulandı ve
+// buraya bağlandı. InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de nvdiffrast'ın
+// RasterizeCudaContext'ini zorunlu kılıyor, bu makinede kurulu olmayan NVIDIA
+// CUDA Toolkit gerektiriyor. Hunyuan3D-2'nin texgen/paint (doku/boyama) kısmı
+// da aynı sebeple eklenMEDİ — custom_rasterizer_kernel de CPU'ya düşmeyen bir
+// CUDAExtension (ayrıntı: docs/worker-envs.md, vendor/hunyuan3d/NOTICE.md).
+type Family = "triposr" | "sf3d" | "openlrm" | "hunyuan3d";
 
 const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
   { id: "sf3d", label: "Stable Fast 3D — dokulu/tekstürlü (~15sn)", modelNameHint: "stable-fast-3d" },
   { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
+  { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh, dokusuz (~9sn)", modelNameHint: "hunyuan3d-dit" },
 ];
 
 const REMESH_OPTIONS: { id: string; label: string }[] = [
@@ -74,6 +77,9 @@ export default function MeshPanel() {
   // openlrm'e özgü
   const [meshSize, setMeshSize] = useState(256);
   const [meshThres, setMeshThres] = useState(3.0);
+  // hunyuan3d'ye özgü
+  const [numInferenceSteps, setNumInferenceSteps] = useState(30);
+  const [octreeResolution, setOctreeResolution] = useState(256);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -182,9 +188,12 @@ export default function MeshPanel() {
       params.texture_resolution = textureResolution;
       params.remesh = remesh;
       params.target_vertex_count = targetVertexCount;
-    } else {
+    } else if (family === "openlrm") {
       params.mesh_size = meshSize;
       params.mesh_thres = meshThres;
+    } else {
+      params.num_inference_steps = numInferenceSteps;
+      params.octree_resolution = octreeResolution;
     }
     try {
       await createJob("mesh", params);
@@ -265,6 +274,17 @@ export default function MeshPanel() {
             araştırma/kişisel kullanım, TİCARİ KULLANIM YOK. İlk kullanımda ayrıca
             ~330MB'lık bir DINOv2 kodlayıcı indirilir (Meta'nın sunucusundan, Model
             Manager'dan bağımsız).
+          </p>
+        )}
+        {family === "hunyuan3d" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            Hunyuan3D-2 ağırlıkları <strong>Tencent Hunyuan 3D 2.0 Community
+            License</strong> ile gelir — AB/UK/Güney Kore hariç her yerde serbest,
+            aylık 1M aktif kullanıcıyı aşan ürünler için Tencent'ten ayrı lisans
+            gerekir. Bu makinede yalnızca <strong>shape (dokusuz mesh)</strong>{" "}
+            üretimi çalışır — doku/boyama (paint) aşaması, nvdiffrast ile aynı
+            sınıftan bir CUDA Toolkit engeline takılıyor (bkz.
+            vendor/hunyuan3d/NOTICE.md).
           </p>
         )}
 
@@ -409,6 +429,37 @@ export default function MeshPanel() {
                 onChange={(e) => setMeshThres(Number(e.target.value))}
                 style={{ width: "100%" }}
               />
+            </div>
+          </>
+        )}
+        {family === "hunyuan3d" && (
+          <>
+            <div>
+              <label>Diffusion adım sayısı: {numInferenceSteps}</label>
+              <input
+                type="range"
+                min={10}
+                max={50}
+                step={5}
+                value={numInferenceSteps}
+                onChange={(e) => setNumInferenceSteps(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label>Octree çözünürlüğü: {octreeResolution}</label>
+              <input
+                type="range"
+                min={128}
+                max={384}
+                step={64}
+                value={octreeResolution}
+                onChange={(e) => setOctreeResolution(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={{ opacity: 0.6, margin: "2px 0 0" }}>
+                yüksek değerler çok daha yoğun mesh üretir (384 ≈ 584K vertex, ~6GB VRAM)
+              </p>
             </div>
           </>
         )}

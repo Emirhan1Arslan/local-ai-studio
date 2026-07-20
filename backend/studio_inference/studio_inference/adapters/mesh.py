@@ -1,28 +1,40 @@
 """Mesh (3D) adapter'ı (Faz 9): Image-to-3D — kademeli liste (plan.md adım 1).
-TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı) ve
-OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer) desteklenen
-üç aile. InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de mesh çıkarımı için
+TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
+OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer) ve
+Hunyuan3D-2 (yalnızca shape — bkz. aşağı) desteklenen dört aile.
+InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de mesh çıkarımı için
 `nvdiffrast`'ın `RasterizeCudaContext`'ini zorunlu kılıyor, bu da (torchmcubes/
 texture_baker'ın aksine) ÇALIŞMA ZAMANINDA JIT CUDA derlemesi gerektiriyor —
 bu makinede NVIDIA CUDA Toolkit kurulu değil, bu üçü için de tek gerçek
 çözüm CUDA Toolkit kurmak (büyük, sistem geneli bir değişiklik — kullanıcı
 onayı olmadan yapılmadı). Ayrıntılar docs/worker-envs.md'de.
-Hunyuan3D-2 (shape+paint) henüz eklenmedi.
+
+Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi, texgen/paint
+(doku/boyama) kısmı eklenMEDİ: `hy3dgen/texgen/custom_rasterizer` de aynı
+nvdiffrast sınıfı engelle karşılaşıyor — `custom_rasterizer_kernel`,
+`torch.utils.cpp_extension.CUDAExtension` ile derlenen, CPU'ya düşmeyen
+(texture_baker/uv_unwrapper'ın aksine) zorunlu bir uzantı. Ayrıntılar
+vendor/hunyuan3d/NOTICE.md'de. Bu makinede Hunyuan3D-2 çıktısı dokusuz
+(vertex-renksiz) mesh'tir — triposr'ın ham çıktısıyla aynı sınıfta.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
-rembg/trimesh importları metod içindedir; API süreci bu modülü hiç yüklemez.
+hy3dgen/rembg/trimesh importları metod içindedir; API süreci bu modülü hiç
+yüklemez.
 
-Üç ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
-`vendor/stablefast3d`, `vendor/openlrm`) — bkz. ilgili NOTICE.md dosyaları.
+Dört ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
+`vendor/stablefast3d`, `vendor/openlrm`, `vendor/hunyuan3d`) — bkz. ilgili
+NOTICE.md dosyaları.
 
 **LİSANS UYARISI:** stable-fast-3d → Stability AI Community License
 (araştırma/kişisel serbest, yıllık geliri 1M USD'yi aşan kuruluşlar için
 Enterprise License gerekir — XTTS-v2 ile aynı desen, bkz. audio.py).
 openlrm → CC-BY-NC-4.0 (yalnızca araştırma/kişisel, TİCARİ KULLANIM YOK).
-TripoSR MIT.
+hunyuan3d → Tencent Hunyuan 3D 2.0 Community License (AB/UK/Güney Kore
+hariç her yerde serbest; aylık 1M aktif kullanıcıyı aşan ürünler için
+Tencent'ten ayrı lisans gerekir). TripoSR MIT.
 
 params:
-- family: triposr (vars.) | sf3d | openlrm
+- family: triposr (vars.) | sf3d | openlrm | hunyuan3d
 - image_path: girdi görsel (zorunlu)
 - model_path: Model Browser'dan seçilen ağırlık dosyası ya da HF repo id
   (boşsa ailenin varsayılan HF repo'su kullanılır — ilk kullanımda ağdan iner)
@@ -43,6 +55,11 @@ openlrm'e özgü:
 - mesh_thres: isosurface eşiği (vars. 3.0)
 - source_cam_dist: kaynak kamera uzaklığı (vars. 2.0)
 
+hunyuan3d'ye özgü:
+- num_inference_steps: diffusion adım sayısı (vars. 30)
+- octree_resolution: hacim kod çözme ızgara çözünürlüğü (vars. 256 —
+  upstream varsayılanı 384'tür ama ~584K vertex üretiyor, 256 daha hafif)
+
 output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı seçer)
 """
 
@@ -59,19 +76,24 @@ _FAMILY_VENDOR_DIR = {
     "triposr": os.path.join(_VENDOR_BASE, "triposr"),
     "sf3d": os.path.join(_VENDOR_BASE, "stablefast3d"),
     "openlrm": os.path.join(_VENDOR_BASE, "openlrm"),
+    "hunyuan3d": os.path.join(_VENDOR_BASE, "hunyuan3d"),
 }
 _FAMILY_DEFAULT_REPO = {
     "triposr": "stabilityai/TripoSR",
     "sf3d": "stabilityai/stable-fast-3d",
     "openlrm": "zxhezexin/openlrm-mix-base-1.1",
+    "hunyuan3d": "tencent/Hunyuan3D-2",
 }
 
 # Tek-adımlı bir ileri geçiş (diffusion değil, adım sayısı yok) — RTX 5090'da
 # canlı ölçüldü: triposr 9.8sn (chair.png, mc_resolution=256), sf3d 14.7sn
 # (chair.png, texture_resolution=1024 — dokulu çıktı, remesh dahil), openlrm
 # 7.3sn (portre fotoğrafı, mesh_size=192 — ilk kullanımda ayrıca ~330MB'lık
-# bir DINOv2 kodlayıcı iner, bu tahmine dahil değil).
-_ESTIMATE_SECONDS = {"triposr": 10.0, "sf3d": 15.0, "openlrm": 8.0}
+# bir DINOv2 kodlayıcı iner, bu tahmine dahil değil). hunyuan3d 9.0sn
+# (num_inference_steps=30, octree_resolution=256 varsayılanlarıyla; 20 adım/
+# 256 çözünürlükte canlı ölçüm 7.8sn sürdü — diffusion örneklemesi ~1.9sn,
+# hacim kod çözme ~4.7sn, adım sayısından bağımsız kısım baskın).
+_ESTIMATE_SECONDS = {"triposr": 10.0, "sf3d": 15.0, "openlrm": 8.0, "hunyuan3d": 9.0}
 
 
 def estimate_seconds(family: str) -> float:
@@ -171,6 +193,39 @@ def _build_openlrm_inferrer(repo: str):
     return LRMInferrer()
 
 
+def _load_hunyuan3d_pipeline(repo: str, device: str):
+    """`smart_load_model()`'ın kendi önbellek-yolu kuralı
+    (`~/.cache/hy3dgen/<repo>/<subfolder>`) burada bilerek atlanıyor — Model
+    Manager'ın gerçek indirme yolu (`.../Hunyuan3D-2/hunyuan3d-dit-v2-0-fast/`)
+    zaten `config.yaml` + `model.fp16.safetensors` içeriyor, doğrudan
+    `from_single_file` ile okunuyor. safetensors'taki tek checkpoint `model.*`,
+    `vae.*` VE `conditioner.*` ağırlıklarının hepsini birlikte barındırıyor
+    (bkz. vendor/hunyuan3d/NOTICE.md) — ayrıca indirilen `hunyuan3d-vae-v2-0`
+    klasörü bu yüzden kullanılmıyor. `repo` yerel bir klasör değilse (model_path
+    boş bırakılıp varsayılan HF repo id'si kullanıldıysa) upstream'in kendi
+    `from_pretrained`/`smart_load_model` akışına düşülüyor."""
+    import torch
+
+    from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    config_path = os.path.join(repo, "config.yaml")
+    ckpt_path = os.path.join(repo, "model.fp16.safetensors")
+    if not os.path.isfile(ckpt_path):
+        ckpt_path = os.path.join(repo, "model.safetensors")
+    if os.path.isfile(config_path) and os.path.isfile(ckpt_path):
+        return Hunyuan3DDiTFlowMatchingPipeline.from_single_file(
+            ckpt_path, config_path, device=device, dtype=dtype, use_safetensors=True
+        )
+    return Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+        repo,
+        subfolder="hunyuan3d-dit-v2-0-fast",
+        device=device,
+        dtype=dtype,
+        use_safetensors=True,
+    )
+
+
 def _resolve_repo(model_path: str, family: str) -> str:
     repo = model_path or _FAMILY_DEFAULT_REPO[family]
     # Model Browser tekil bir ağırlık dosyası verebilir (config.yaml/.ckpt/
@@ -222,6 +277,8 @@ class MeshAdapter:
             model.eval()
         elif family == "openlrm":
             model = _build_openlrm_inferrer(repo)
+        elif family == "hunyuan3d":
+            model = _load_hunyuan3d_pipeline(repo, device)
         else:
             raise AssertionError("unreachable")
 
@@ -299,7 +356,7 @@ class MeshAdapter:
                         remesh=remesh,
                         vertex_count=target_vertex_count,
                     )
-        else:  # openlrm
+        elif family == "openlrm":
             import tempfile
 
             import trimesh
@@ -337,6 +394,19 @@ class MeshAdapter:
             }
             yield {"event": "done", "result": result}
             return
+        elif family == "hunyuan3d":
+            num_inference_steps = int(params.get("num_inference_steps", 30))
+            octree_resolution = int(params.get("octree_resolution", 256))
+            yield _progress(
+                f"diffusion örneklemesi ({num_inference_steps} adım) + hacim kod çözme…"
+            )
+            mesh = self._model(
+                image=image,
+                num_inference_steps=num_inference_steps,
+                octree_resolution=octree_resolution,
+            )[0]
+        else:
+            raise AssertionError("unreachable")
 
         yield _progress("dışa aktarılıyor…")
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
@@ -365,9 +435,13 @@ class MeshAdapter:
 
     def vram_estimate(self, params: dict) -> int:
         family = str(params.get("family", "triposr") or "triposr")
-        # Üçü de küçük modeller (~700MB-2GB ağırlık) — kaba, güvenli tahmin.
-        if family == "sf3d":
-            return 6_000
+        # triposr/sf3d/openlrm: küçük modeller (~700MB-2GB ağırlık) — kaba,
+        # güvenli tahmin. hunyuan3d: canlı ölçüldü — num_inference_steps=30,
+        # octree_resolution=384 (upstream varsayılanı) ile tepe VRAM 5983MB;
+        # UI varsayılanı 256 daha hafif ama kullanıcı 384'e çıkarabilir, pay
+        # bırakılıyor.
+        if family in ("sf3d", "hunyuan3d"):
+            return 6_500
         return 4_000
 
 

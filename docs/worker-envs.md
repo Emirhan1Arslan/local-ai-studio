@@ -857,7 +857,69 @@ DINOv2 kodlayıcı indirmesi dahil) 40.6 sn'de 289.393 vertex/578.542 yüz —
 TripoSR/SF3D'den belirgin biçimde daha yoğun mesh üretiyor (varsayılan UI
 değeri bu yüzden 256'ya düşürüldü, kaydırıcıyla 384'e çıkarılabilir).
 
-**Henüz eklenmedi (ağırlıklar `models/3d/` altında hazır, adapter kodu
-yok):** Hunyuan3D-2 (shape+paint) — diffusers-uyumlu bir pipeline yapısına
-sahip olduğu için (`model_index.json` var), muhtemelen InstantMesh/TRELLIS/
-CRM'den daha tractable; henüz araştırılmadı.
+## Faz 9 — Hunyuan3D-2 dördüncü aile olarak eklendi (yalnızca shape, dokusuz)
+
+Araştırma: Hunyuan3D-2'nin `requirements.txt`'inde `nvdiffrast` YOK (grep
+boş döndü) — InstantMesh/TRELLIS/CRM'e göre umut vericiydi. Ama repo İKİ ayrı
+alt paket içeriyor: `hy3dgen/shapegen` (image→dokusuz mesh, diffusion+VAE) ve
+`hy3dgen/texgen` (doku/boyama — multi-view diffusion + UV'ye pişirme).
+`hy3dgen/texgen/custom_rasterizer/setup.py` `custom_rasterizer_kernel`'i
+`torch.utils.cpp_extension.CUDAExtension` ile derliyor (`rasterizer_gpu.cu`,
+nvcc gerektiriyor) ve `render.py` içinde KOŞULSUZ `import
+custom_rasterizer_kernel` var — texture_baker/uv_unwrapper'ın aksine CPU'ya
+düşen bir yol yok. **Bu, nvdiffrast ile AYNI sınıf engel** (CUDA Toolkit
+gerektiren, çalışma zamanı derleme). `differentiable_renderer/setup.py`
+(`mesh_processor`, saf pybind11/C++, CUDA'sız) tek başına bir şey
+çözmüyor — texgen pipeline'ı `custom_rasterizer` olmadan zaten çalışmıyor.
+
+**Kritik bulgu — shapegen texgen'den TAMAMEN bağımsız:**
+`grep -rl texgen hy3dgen/shapegen` boş döndü, `hy3dgen/__init__.py`'de de
+texgen'i eager import eden bir şey yok. Yani shape üretimi bu makinede
+CUDA Toolkit olmadan ÇALIŞIYOR — yalnızca texgen/paint aşaması engelli.
+Bu, "Hunyuan3D-2 diffusers-uyumlu (`model_index.json` var)" şeklindeki
+önceki notumuzdan farklı çıktı — gerçekte kendi omegaconf/yaml
+tabanlı config + tek-checkpoint (`from_single_file`) yükleme deseni
+kullanıyor, diffusers `model_index.json` deseni değil.
+
+`envs/3d`'ye eklenen bağımlılıklar: `diffusers==0.39.0`, `pymeshlab`
+(`hy3dgen/shapegen/__init__.py`, `postprocessors.py`'yi eager import ettiği
+için pymeshlab HER ZAMAN gerekli — FaceReducer/FloaterRemover kullanılmasa
+bile). Kurulumdan sonra **yine `torch.cuda.is_available()` kontrol edildi —
+bu sefer gölgeleme OLMADI** (`diffusers`/`pymeshlab` pinsiz `torch` çekmedi).
+
+**Model yükleme:** upstream'in `smart_load_model()`'ı kendi önbellek-yolu
+kuralını (`~/.cache/hy3dgen/<repo>/<subfolder>`) kullanıyor — Model
+Manager'ın gerçek indirme klasörüyle uyuşmuyor. `adapters/mesh.py` bunu
+atlayıp `Hunyuan3DDiTFlowMatchingPipeline.from_single_file(ckpt_path,
+config_path, ...)`'i doğrudan `hunyuan3d-dit-v2-0-fast/` klasörüne
+işaret ederek çağırıyor (model_path boşsa upstream'in `from_pretrained`+
+`smart_load_model` akışına, yani HF indirmesine düşülüyor). Ayrıca
+**ayrıca indirilen `hunyuan3d-vae-v2-0` klasörü gereksiz** olduğu
+keşfedildi: `hunyuan3d-dit-v2-0-fast/model.fp16.safetensors`'ın
+safetensors anahtar önekleri incelendiğinde (`model.*`, `vae.*`,
+`conditioner.*`) TEK checkpoint'in üçünü de birlikte barındırdığı görüldü
+— `from_single_file` zaten hepsini aynı dosyadan okuyor.
+
+**LİSANS UYARISI:** Tencent Hunyuan 3D 2.0 Community License — AB/UK/Güney
+Kore hariç her yerde serbest; aylık 1M aktif kullanıcıyı aşan ürünler için
+Tencent'ten ayrı lisans (`hunyuan3d@tencent.com`) gerekir. SF3D/OpenLRM'le
+aynı desende UI'da gösteriliyor.
+
+**Canlı doğrulama (gerçek `/v1/jobs` API'si üzerinden):** `num_inference_
+steps=20, octree_resolution=256` ile **41 sn'de** (worker soğuk başlangıcı +
+model yükleme dahil — model yükleme tek başına ~25sn) 232.496 vertex/464.984
+yüz. VRAM tepe noktası standalone ölçümde (steps=30, octree_resolution=384 —
+upstream varsayılanı) **5983MB**, 584.401 vertex/1.168.808 yüz — TripoSR/
+SF3D/OpenLRM'den belirgin biçimde daha yoğun (UI varsayılanı bu yüzden
+octree_resolution=256'ya düşürüldü).
+
+Vendor: yalnızca `hy3dgen/shapegen/` (+ paket kökü `hy3dgen/__init__.py`)
+`vendor/hunyuan3d/`'ye kopyalandı — `hy3dgen/texgen/` bilerek dışarıda
+bırakıldı (yukarıdaki engel nedeniyle). Ayrıntı ve provenance:
+`vendor/hunyuan3d/NOTICE.md`.
+
+**Kademeli listenin geri kalanı (InstantMesh/TRELLIS/CRM) hâlâ engelli:**
+Hunyuan3D-2'nin shapegen/texgen ayrımı bu üçünde YOK — üçü de rasterizasyonu
+mesh çıkarımının kendisinde (yalnızca ayrı bir doku aşamasında değil)
+kullanıyor, dolayısıyla "yalnızca shape kısmını al" gibi bir bölünme mümkün
+değil. Bu üçü, CUDA Toolkit kurulmadıkça kapsam dışı kalmaya devam ediyor.

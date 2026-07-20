@@ -587,10 +587,32 @@ Canlı doğrulama (gerçek `/v1/jobs` API'si): portre fotoğrafından 7.3sn'de
 üretiyor. Lisansı CC BY-NC 4.0 (ticari kullanım yok), UI'da gösteriliyor.
 Ayrıntılar docs/worker-envs.md'de.
 
-**Sıradaki adımlar:** Hunyuan3D-2 (shape+paint) — diffusers-uyumlu bir
-pipeline yapısına sahip (`model_index.json` var), muhtemelen InstantMesh/
-TRELLIS/CRM'den daha tractable, henüz araştırılmadı. InstantMesh/TRELLIS/
-CRM, CUDA Toolkit kurulmadıkça kapsam dışı kalacak.
+**Hunyuan3D-2 dördüncü aile olarak canlı doğrulandı (yalnızca shape, dokusuz):**
+Repo iki bağımsız alt pakete ayrılıyor: `hy3dgen/shapegen` (image→dokusuz
+mesh) ve `hy3dgen/texgen` (doku/boyama). texgen'in `custom_rasterizer`'ı
+nvdiffrast ile AYNI sınıf engele sahip (`CUDAExtension`, koşulsuz `import
+custom_rasterizer_kernel`, CPU'ya düşmüyor) — ama shapegen texgen'den
+TAMAMEN bağımsız (`grep -rl texgen hy3dgen/shapegen` boş döndü), yani shape
+üretimi CUDA Toolkit olmadan çalışıyor. Önceki "diffusers-uyumlu
+(`model_index.json`)" notumuz yanlış çıktı — gerçekte kendi omegaconf/yaml
+config + tek-checkpoint (`from_single_file`) deseni kullanıyor. Yalnızca
+`hy3dgen/shapegen/` vendor edildi. Ayrıca indirilen `hunyuan3d-vae-v2-0`
+klasörünün gereksiz olduğu keşfedildi — `hunyuan3d-dit-v2-0-fast`'ın tek
+checkpoint'i (`model.fp16.safetensors`) `model.*`/`vae.*`/`conditioner.*`
+ağırlıklarının hepsini zaten birlikte barındırıyor. Canlı doğrulama (gerçek
+`/v1/jobs` API'si): 41sn'de (worker soğuk başlangıç + model yükleme dahil)
+232.496 vertex/464.984 yüz; standalone VRAM tepe ölçümü (steps=30,
+octree_resolution=384) 5983MB, 584.401 vertex/1.168.808 yüz. Lisansı
+Tencent Hunyuan 3D 2.0 Community License (AB/UK/Güney Kore hariç serbest,
+1M MAU üstü ayrı lisans gerekir), UI'da gösteriliyor. Ayrıntılar
+docs/worker-envs.md'de.
+
+**Kademeli liste durumu:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
+(shape) canlı doğrulandı ve `MeshPanel.tsx`'e bağlandı — dört aile de
+`/v1/jobs` üzerinden gerçek GLB üretiyor. InstantMesh/TRELLIS/CRM, CUDA
+Toolkit kurulmadıkça kapsam dışı kalmaya devam ediyor (Hunyuan3D-2'nin
+shapegen/texgen ayrımı bu üçünde yok — rasterizasyon mesh çıkarımının
+kendisinde, bölünemiyor).
 
 ---
 
