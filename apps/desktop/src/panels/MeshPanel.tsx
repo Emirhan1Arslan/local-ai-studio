@@ -16,15 +16,18 @@ import {
 } from "../api";
 import { useStudio } from "../state";
 
-// plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı) ve Stable
-// Fast 3D (dokulu/tekstürlü çıktı) canlı doğrulandı ve buraya bağlandı.
-// InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM/CRM ağırlıkları models/3d altında
-// hazır ama adapter kodu henüz yazılmadı (docs/worker-envs.md'de durum notu).
-type Family = "triposr" | "sf3d";
+// plan.md Faz 9 adım 1'in kademeli listesi: TripoSR (hafif, hızlı), Stable
+// Fast 3D (dokulu/tekstürlü çıktı) ve OpenLRM (vertex-renkli, yüksek çözünürlük)
+// canlı doğrulandı ve buraya bağlandı. InstantMesh/TRELLIS/CRM eklenMEDİ —
+// üçü de nvdiffrast'ın RasterizeCudaContext'ini zorunlu kılıyor, bu makinede
+// kurulu olmayan NVIDIA CUDA Toolkit gerektiriyor (docs/worker-envs.md'de
+// ayrıntı). Hunyuan3D-2 (shape+paint) henüz eklenmedi.
+type Family = "triposr" | "sf3d" | "openlrm";
 
 const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
   { id: "sf3d", label: "Stable Fast 3D — dokulu/tekstürlü (~15sn)", modelNameHint: "stable-fast-3d" },
+  { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
 ];
 
 const REMESH_OPTIONS: { id: string; label: string }[] = [
@@ -68,6 +71,9 @@ export default function MeshPanel() {
   const [textureResolution, setTextureResolution] = useState(1024);
   const [remesh, setRemesh] = useState("none");
   const [targetVertexCount, setTargetVertexCount] = useState(-1);
+  // openlrm'e özgü
+  const [meshSize, setMeshSize] = useState(256);
+  const [meshThres, setMeshThres] = useState(3.0);
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -172,10 +178,13 @@ export default function MeshPanel() {
     };
     if (family === "triposr") {
       params.mc_resolution = mcResolution;
-    } else {
+    } else if (family === "sf3d") {
       params.texture_resolution = textureResolution;
       params.remesh = remesh;
       params.target_vertex_count = targetVertexCount;
+    } else {
+      params.mesh_size = meshSize;
+      params.mesh_thres = meshThres;
     }
     try {
       await createJob("mesh", params);
@@ -250,6 +259,14 @@ export default function MeshPanel() {
             kuruluşlar için ayrı bir Enterprise License gerekir.
           </p>
         )}
+        {family === "openlrm" && (
+          <p style={{ opacity: 0.7, margin: 0 }}>
+            OpenLRM ağırlıkları <strong>CC BY-NC 4.0</strong> ile gelir — yalnızca
+            araştırma/kişisel kullanım, TİCARİ KULLANIM YOK. İlk kullanımda ayrıca
+            ~330MB'lık bir DINOv2 kodlayıcı indirilir (Meta'nın sunucusundan, Model
+            Manager'dan bağımsız).
+          </p>
+        )}
 
         <div>
           <label>Ağırlık (boşsa HF'den iner)</label>
@@ -305,7 +322,7 @@ export default function MeshPanel() {
           </div>
         )}
 
-        {family === "triposr" ? (
+        {family === "triposr" && (
           <div>
             <label>Marching cubes çözünürlüğü: {mcResolution}</label>
             <input
@@ -318,7 +335,8 @@ export default function MeshPanel() {
               style={{ width: "100%" }}
             />
           </div>
-        ) : (
+        )}
+        {family === "sf3d" && (
           <>
             <div>
               <label>Doku çözünürlüğü: {textureResolution}px</label>
@@ -361,6 +379,37 @@ export default function MeshPanel() {
                 />
               </div>
             )}
+          </>
+        )}
+        {family === "openlrm" && (
+          <>
+            <div>
+              <label>Marching cubes çözünürlüğü: {meshSize}</label>
+              <input
+                type="range"
+                min={128}
+                max={384}
+                step={64}
+                value={meshSize}
+                onChange={(e) => setMeshSize(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={{ opacity: 0.6, margin: "2px 0 0" }}>
+                yüksek değerler çok daha yoğun mesh üretir (384 ≈ 289K vertex)
+              </p>
+            </div>
+            <div>
+              <label>Isosurface eşiği: {meshThres.toFixed(1)}</label>
+              <input
+                type="range"
+                min={0.5}
+                max={10}
+                step={0.5}
+                value={meshThres}
+                onChange={(e) => setMeshThres(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
           </>
         )}
 

@@ -1,22 +1,28 @@
 """Mesh (3D) adapter'ı (Faz 9): Image-to-3D — kademeli liste (plan.md adım 1).
-TripoSR (hafif, hızlı) ve Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı)
-şimdilik desteklenen iki aile; InstantMesh/TRELLIS/Hunyuan3D-2/OpenLRM/CRM
-sonraki dilimlerde eklenecek (ağırlıkları zaten `models/3d/` altında,
-docs/worker-envs.md'de durum notu var).
+TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı) ve
+OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer) desteklenen
+üç aile. InstantMesh/TRELLIS/CRM eklenMEDİ — üçü de mesh çıkarımı için
+`nvdiffrast`'ın `RasterizeCudaContext`'ini zorunlu kılıyor, bu da (torchmcubes/
+texture_baker'ın aksine) ÇALIŞMA ZAMANINDA JIT CUDA derlemesi gerektiriyor —
+bu makinede NVIDIA CUDA Toolkit kurulu değil, bu üçü için de tek gerçek
+çözüm CUDA Toolkit kurmak (büyük, sistem geneli bir değişiklik — kullanıcı
+onayı olmadan yapılmadı). Ayrıntılar docs/worker-envs.md'de.
+Hunyuan3D-2 (shape+paint) henüz eklenmedi.
 
-DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/rembg/
-trimesh importları metod içindedir; API süreci bu modülü hiç yüklemez.
+DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
+rembg/trimesh importları metod içindedir; API süreci bu modülü hiç yüklemez.
 
-Her iki ailenin de kendi çıkarım kodu (`tsr`/`sf3d` paketleri) vendor edildi
-(`vendor/triposr`, `vendor/stablefast3d`) — bkz. ilgili NOTICE.md dosyaları.
+Üç ailenin de kendi çıkarım kodu vendor edildi (`vendor/triposr`,
+`vendor/stablefast3d`, `vendor/openlrm`) — bkz. ilgili NOTICE.md dosyaları.
 
-**LİSANS UYARISI (yalnızca stable-fast-3d):** Stability AI Community
-License — araştırma/kişisel kullanım serbest, yıllık geliri 1M USD'yi aşan
-kuruluşlar için ayrı Enterprise License gerekir (XTTS-v2 ile aynı uyarı
-deseni, bkz. audio.py). TripoSR MIT.
+**LİSANS UYARISI:** stable-fast-3d → Stability AI Community License
+(araştırma/kişisel serbest, yıllık geliri 1M USD'yi aşan kuruluşlar için
+Enterprise License gerekir — XTTS-v2 ile aynı desen, bkz. audio.py).
+openlrm → CC-BY-NC-4.0 (yalnızca araştırma/kişisel, TİCARİ KULLANIM YOK).
+TripoSR MIT.
 
 params:
-- family: triposr (vars.) | sf3d
+- family: triposr (vars.) | sf3d | openlrm
 - image_path: girdi görsel (zorunlu)
 - model_path: Model Browser'dan seçilen ağırlık dosyası ya da HF repo id
   (boşsa ailenin varsayılan HF repo'su kullanılır — ilk kullanımda ağdan iner)
@@ -31,6 +37,11 @@ sf3d'ye özgü:
 - texture_resolution: doku atlası çözünürlüğü (vars. 1024)
 - remesh: none (vars.) | triangle | quad
 - target_vertex_count: hedef vertex sayısı (vars. -1 = küçültme yok)
+
+openlrm'e özgü:
+- mesh_size: marching cubes ızgara çözünürlüğü (vars. 384)
+- mesh_thres: isosurface eşiği (vars. 3.0)
+- source_cam_dist: kaynak kamera uzaklığı (vars. 2.0)
 
 output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı seçer)
 """
@@ -47,16 +58,20 @@ _VENDOR_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ve
 _FAMILY_VENDOR_DIR = {
     "triposr": os.path.join(_VENDOR_BASE, "triposr"),
     "sf3d": os.path.join(_VENDOR_BASE, "stablefast3d"),
+    "openlrm": os.path.join(_VENDOR_BASE, "openlrm"),
 }
 _FAMILY_DEFAULT_REPO = {
     "triposr": "stabilityai/TripoSR",
     "sf3d": "stabilityai/stable-fast-3d",
+    "openlrm": "zxhezexin/openlrm-mix-base-1.1",
 }
 
 # Tek-adımlı bir ileri geçiş (diffusion değil, adım sayısı yok) — RTX 5090'da
 # canlı ölçüldü: triposr 9.8sn (chair.png, mc_resolution=256), sf3d 14.7sn
-# (chair.png, texture_resolution=1024 — dokulu çıktı, remesh dahil).
-_ESTIMATE_SECONDS = {"triposr": 10.0, "sf3d": 15.0}
+# (chair.png, texture_resolution=1024 — dokulu çıktı, remesh dahil), openlrm
+# 7.3sn (portre fotoğrafı, mesh_size=192 — ilk kullanımda ayrıca ~330MB'lık
+# bir DINOv2 kodlayıcı iner, bu tahmine dahil değil).
+_ESTIMATE_SECONDS = {"triposr": 10.0, "sf3d": 15.0, "openlrm": 8.0}
 
 
 def estimate_seconds(family: str) -> float:
@@ -102,6 +117,58 @@ def _patch_texture_baker_for_cpu_kernel() -> None:
     TextureBaker.rasterize = rasterize
     TextureBaker.interpolate = interpolate
     _texture_baker_patched = True
+
+
+def _remove_background(image, rembg_session):
+    """TripoSR/SF3D/OpenLRM'in üçünde de aynı algoritma (Stability AI'nin
+    ortak soyundan geliyor) — tek, aileden bağımsız bir kopya burada tutulup
+    çapraz-aile vendor import'undan kaçınılıyor (openlrm yüklüyken sf3d'nin
+    vendor dizini sys.path'te olmayabilir)."""
+    if image.mode == "RGBA" and image.getextrema()[3][0] < 255:
+        return image  # zaten gerçek bir alfa maskesi var
+    import rembg
+
+    return rembg.remove(image, session=rembg_session)
+
+
+def _resize_foreground(image, ratio: float):
+    import numpy as np
+    from PIL import Image
+
+    arr = np.array(image)
+    alpha = np.where(arr[..., 3] > 0)
+    y1, y2, x1, x2 = alpha[0].min(), alpha[0].max(), alpha[1].min(), alpha[1].max()
+    fg = arr[y1:y2, x1:x2]
+    size = max(fg.shape[0], fg.shape[1])
+    ph0, pw0 = (size - fg.shape[0]) // 2, (size - fg.shape[1]) // 2
+    ph1, pw1 = size - fg.shape[0] - ph0, size - fg.shape[1] - pw0
+    new_image = np.pad(fg, ((ph0, ph1), (pw0, pw1), (0, 0)), mode="constant")
+    new_size = int(new_image.shape[0] / ratio)
+    ph0, pw0 = (new_size - size) // 2, (new_size - size) // 2
+    ph1, pw1 = new_size - size - ph0, new_size - size - pw0
+    new_image = np.pad(new_image, ((ph0, ph1), (pw0, pw1), (0, 0)), mode="constant")
+    return Image.fromarray(new_image)
+
+
+def _build_openlrm_inferrer(repo: str):
+    """LRMInferrer, kendi kurucusunda ortam değişkenlerinden (APP_MODEL_NAME/
+    APP_INFER) okuyan bir CLI/Hydra-tarzı yapılandırma kullanıyor
+    (openlrm/runners/infer/lrm.py::parse_configs) — gradio app.py'nin kendisi
+    de aynı desenle çağırıyor, biz de programatik olarak taklit ediyoruz.
+    repo adında/yolunda 'small'/'large' geçiyorsa ilgili config, yoksa
+    varsayılan olarak 'base' config'i kullanılır (indirilen tek model
+    openlrm-mix-base-1.1)."""
+    name_lower = repo.lower()
+    size = "s" if "small" in name_lower else "l" if "large" in name_lower else "b"
+    config_path = os.path.join(_FAMILY_VENDOR_DIR["openlrm"], "configs", f"infer-{size}.yaml")
+
+    os.environ["APP_ENABLED"] = "1"
+    os.environ["APP_MODEL_NAME"] = repo
+    os.environ["APP_INFER"] = config_path
+
+    from openlrm.runners.infer.lrm import LRMInferrer
+
+    return LRMInferrer()
 
 
 def _resolve_repo(model_path: str, family: str) -> str:
@@ -153,6 +220,8 @@ class MeshAdapter:
             )
             model.to(device)
             model.eval()
+        elif family == "openlrm":
+            model = _build_openlrm_inferrer(repo)
         else:
             raise AssertionError("unreachable")
 
@@ -185,26 +254,20 @@ class MeshAdapter:
             return {"event": "progress", "message": f"[{time.time()-t0:6.1f}s] {msg}"}
 
         yield _progress("görsel hazırlanıyor…")
-        # sf3d her zaman RGBA bekliyor (remove_bg=False ise alfa=255, tüm
-        # görsel önplan sayılır); triposr düz RGB kabul ediyor.
-        image = Image.open(image_path).convert("RGBA" if family == "sf3d" else "RGB")
+        image = Image.open(image_path).convert("RGBA")
         if remove_bg:
             import rembg
 
-            if family == "triposr":
-                from tsr.utils import remove_background, resize_foreground
-            else:
-                from sf3d.utils import remove_background, resize_foreground
-
-            image = remove_background(Image.open(image_path).convert("RGBA"), rembg.new_session())
-            image = resize_foreground(image, foreground_ratio)
-            if family == "triposr":
-                # TripoSR gri arkaplana compose edilmiş düz RGB bekliyor.
-                arr = np.array(image).astype(np.float32) / 255.0
-                arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
-                image = Image.fromarray((arr * 255.0).astype(np.uint8))
-            # sf3d: prepare_image() ham RGBA bekliyor (alfa kanalını kendi
-            # işliyor) — compose ETMİYORUZ, image RGBA olarak kalıyor.
+            image = _remove_background(image, rembg.new_session())
+            image = _resize_foreground(image, foreground_ratio)
+        if family == "triposr":
+            # TripoSR gri arkaplana compose edilmiş düz RGB bekliyor.
+            arr = np.array(image).astype(np.float32) / 255.0
+            arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
+            image = Image.fromarray((arr * 255.0).astype(np.uint8))
+        # sf3d: prepare_image() ham RGBA bekliyor (alfa kanalını kendi işliyor).
+        # openlrm: infer_single() dosyadan okuyup kendi RGBA->RGB compose'unu
+        # (beyaz arkaplan) kendi yapıyor — ikisi de RGBA olarak kalıyor.
 
         if family == "triposr":
             mc_resolution = int(params.get("mc_resolution", 256))
@@ -216,7 +279,7 @@ class MeshAdapter:
             yield _progress(f"mesh çıkarılıyor (çözünürlük {mc_resolution})…")
             meshes = self._model.extract_mesh(scene_codes, True, resolution=mc_resolution)
             mesh = meshes[0]
-        else:  # sf3d
+        elif family == "sf3d":
             import torch
 
             texture_resolution = int(params.get("texture_resolution", 1024))
@@ -236,6 +299,44 @@ class MeshAdapter:
                         remesh=remesh,
                         vertex_count=target_vertex_count,
                     )
+        else:  # openlrm
+            import tempfile
+
+            import trimesh
+
+            mesh_size = int(params.get("mesh_size", 384))
+            mesh_thres = float(params.get("mesh_thres", 3.0))
+            source_cam_dist = params.get("source_cam_dist")
+            yield _progress("model çıkarımı çalışıyor…")
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_image_path = tmp.name
+            try:
+                image.save(tmp_image_path)
+                self._model.cfg.mesh_size = mesh_size
+                self._model.cfg.mesh_thres = mesh_thres
+                # infer_mesh() dosyaya export ediyor ama mesh nesnesini geri
+                # döndürmüyor — dışa aktarımdan sonra vertex/yüz sayısı için
+                # trimesh ile tekrar okunuyor (aşağıda).
+                self._model.infer_single(
+                    tmp_image_path,
+                    source_cam_dist=float(source_cam_dist) if source_cam_dist else None,
+                    export_video=False,
+                    export_mesh=True,
+                    dump_video_path="",
+                    dump_mesh_path=output_path,
+                )
+            finally:
+                os.unlink(tmp_image_path)
+            yield _progress("dışa aktarılıyor…")
+            mesh = trimesh.load(output_path, force="mesh")
+            result = {
+                "path": output_path,
+                "family": family,
+                "vertices": int(mesh.vertices.shape[0]),
+                "faces": int(mesh.faces.shape[0]),
+            }
+            yield {"event": "done", "result": result}
+            return
 
         yield _progress("dışa aktarılıyor…")
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
@@ -264,8 +365,10 @@ class MeshAdapter:
 
     def vram_estimate(self, params: dict) -> int:
         family = str(params.get("family", "triposr") or "triposr")
-        # Her ikisi de küçük modeller (~700MB-2GB ağırlık) — kaba, güvenli tahmin.
-        return 6_000 if family == "sf3d" else 4_000
+        # Üçü de küçük modeller (~700MB-2GB ağırlık) — kaba, güvenli tahmin.
+        if family == "sf3d":
+            return 6_000
+        return 4_000
 
 
 def _nullcontext():

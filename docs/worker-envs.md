@@ -787,12 +787,77 @@ portre fotoğrafından **15.6 sn'de** 17.152 vertex/30.700 yüz, gerçek
 `PBRMaterial` + 1024×1024 baked `baseColorTexture` ile GLB üretildi
 (`trimesh` ile doğrulandı: `visual.kind == "texture"`).
 
-**MeshPanel.tsx güncellendi:** aile seçici (TripoSR/SF3D), aileye özgü
-alanlar (triposr: mc_resolution; sf3d: texture_resolution/remesh/
-target_vertex_count), model listesi seçili aileye göre filtreleniyor, SF3D
-lisans notu.
+**MeshPanel.tsx güncellendi:** aile seçici (TripoSR/SF3D/OpenLRM), aileye
+özgü alanlar (triposr: mc_resolution; sf3d: texture_resolution/remesh/
+target_vertex_count; openlrm: mesh_size/mesh_thres), model listesi seçili
+aileye göre filtreleniyor, SF3D + OpenLRM lisans notları.
+
+## Faz 9 — nvdiffrast engeli: InstantMesh/TRELLIS/CRM ORTAK sorunu
+
+Kademeli listenin üç modeli (InstantMesh, TRELLIS, CRM) araştırıldı — üçü
+de mesh çıkarım/render adımında `nvdiffrast`'ın `dr.RasterizeCudaContext()`'ini
+kod içinde SABİT kullanıyor (yapılandırılabilir değil, birden fazla dosyada
+hardcoded). `nvdiffrast` texture_baker/torchmcubes'un aksine ÇALIŞMA
+ZAMANINDA JIT CUDA derlemesi yapıyor (`torch.utils.cpp_extension.load`) —
+bu, `CUDA_HOME`'un o an sistemde bulunmasını gerektiriyor, yalnızca pip
+install anında değil HER model yüklemesinde. `RasterizeGLContext` bile
+(OpenGL tabanlı rasterizasyon) `RasterizeCudaContext`'in ALT SINIFI —
+interpolasyon/antialiasing/doku örnekleme operatörleri hâlâ CUDA çekirdekleri,
+yalnızca üçgen rasterizasyon adımı OpenGL'e düşüyor — yani GL modu da CUDA
+Toolkit'ten kaçamıyor. Ayrıca TRELLIS `spconv`/`kaolin`/`flash-attn` gibi
+başka CUDA-Toolkit-gerektiren ağır bağımlılıklara da sahip (nvdiffrast'tan
+bağımsız olarak).
+
+**Sonuç:** Bu üç model, NVIDIA CUDA Toolkit kurulmadan bu makinede ÇALIŞMAZ
+— torchmcubes/texture_baker'daki gibi bir CPU-fallback yamasıyla
+atlatılamıyor (kod düzeyinde değil, çalışma zamanı JIT derleme düzeyinde bir
+kısıt). CUDA Toolkit'in tam kurulumu büyük, sistem geneli bir değişiklik —
+kullanıcı onayı olmadan yapılmadı, `adapters/mesh.py`'nin modül
+docstring'inde bu üçünün neden eklenmediği açıkça not edildi.
+
+## Faz 9 — OpenLRM üçüncü aile olarak eklendi
+
+`envs/3d`'ye eklenen bağımlılıklar: `lpips`, `megfile`, `PyMCubes`
+(TripoSR/SF3D'nin aksine OpenLRM `mcubes.marching_cubes` — saf CPU marching
+cubes — kullanıyor, `nvdiffrast` YOK, render tamamen kendi EG3D-tarzı saf
+PyTorch `MipRayMarcher2` hacim render'ıyla yapılıyor).
+
+**AYNI torch-gölgeleme kazası TEKRAR oldu:** `lpips`/`megfile` kurulumu yine
+pinlenmemiş bir `torch` isteyip `envs/3d`'nin korumalı sistem torch'unu
+(2.11.0+cu128) CPU-only bir kopyayla gölgeledi — aynı `uv pip uninstall
+torch torchvision` ile düzeltildi. **Ders pekişti:** bu paylaşılan env'e
+YENİ bir paket eklenen HER SEFERİNDE `torch.cuda.is_available()` hemen
+kontrol edilmeli, varsayım yapılmamalı.
+
+**Mimari zorluk:** `LRMInferrer` (openlrm/runners/infer/lrm.py) kendi
+kurucusunda `argparse`/ortam değişkenlerinden (`APP_MODEL_NAME`, `APP_INFER`)
+okuyan bir CLI/Hydra-tarzı yapılandırma kullanıyor — basit bir
+`Class.from_pretrained()` deseni değil. Kendi `app.py`'sinin (gradio demo)
+yaptığı gibi taklit edildi: `os.environ` ile `APP_ENABLED`/`APP_MODEL_NAME`/
+`APP_INFER` (repo adında "small"/"large" geçmiyorsa `infer-b.yaml`, ağırlığı
+indirilen tek model `openlrm-mix-base-1.1` olduğu için) ayarlanıp
+`LRMInferrer()` örnekleniyor. `infer_single()` bir dosya yolundan okuyor
+(PIL Image kabul etmiyor) ve mesh'i doğrudan döndürMÜYOR (yalnızca dosyaya
+export ediyor) — geçici bir PNG'ye yazılıp sonuç `trimesh` ile geri
+okunuyor.
+
+**Kod düzenlemesi:** `remove_background`/`resize_foreground` artık
+`mesh.py`'de aileden bağımsız, PAYLAŞILAN bir kopya (önceden TripoSR/SF3D
+kendi vendor modüllerinden import ediyordu — openlrm yüklüyken sf3d'nin
+vendor dizini sys.path'te olmayabileceği için çapraz-aile import'u kaldırıldı).
+
+**LİSANS UYARISI:** kod Apache-2.0, ağırlıklar **CC BY-NC 4.0** (yalnızca
+araştırma/kişisel, ticari kullanım YOK) — UI'da SF3D ile aynı desende
+gösteriliyor.
+
+**Canlı doğrulama (gerçek `/v1/jobs` API'si üzerinden):** bir portre
+fotoğrafından (mesh_size=192) **7.3 sn'de** 115.857 vertex/231.688 yüz;
+standalone smoke testte (chair.png, mesh_size=384, ilk kullanım — 330MB'lık
+DINOv2 kodlayıcı indirmesi dahil) 40.6 sn'de 289.393 vertex/578.542 yüz —
+TripoSR/SF3D'den belirgin biçimde daha yoğun mesh üretiyor (varsayılan UI
+değeri bu yüzden 256'ya düşürüldü, kaydırıcıyla 384'e çıkarılabilir).
 
 **Henüz eklenmedi (ağırlıklar `models/3d/` altında hazır, adapter kodu
-yok):** InstantMesh, TRELLIS-image-large, Hunyuan3D-2 (shape+paint),
-OpenLRM, CRM — her biri kendi özel çıkarım koduna göre (TripoSR/SF3D'de
-olduğu gibi) ayrı ayrı vendor edilip test edilmesi gerekiyor.
+yok):** Hunyuan3D-2 (shape+paint) — diffusers-uyumlu bir pipeline yapısına
+sahip olduğu için (`model_index.json` var), muhtemelen InstantMesh/TRELLIS/
+CRM'den daha tractable; henüz araştırılmadı.

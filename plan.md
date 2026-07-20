@@ -564,10 +564,33 @@ uyarısı eklendi. Canlı doğrulama: gerçek `/v1/jobs` API'si üzerinden bir
 portre fotoğrafından 15.6sn'de 17.152 vertex/30.700 yüz, gerçek PBR
 doku ile. Ayrıntılar docs/worker-envs.md'de.
 
-**Sıradaki adımlar:** Kademeli listenin kalan modelleri (InstantMesh/
-TRELLIS/Hunyuan3D-2 [shape+paint]/OpenLRM/CRM) — ağırlıkları `models/3d/`
-altında hazır, her biri TripoSR/SF3D'ye benzer ayrı bir vendoring+adapter
-eforu gerektiriyor.
+**Kademeli liste araştırıldı — InstantMesh/TRELLIS/CRM'in ORTAK bir engeli
+var:** Üçü de mesh çıkarımı için `nvdiffrast`'ın `RasterizeCudaContext`'ini
+kod içinde sabit kullanıyor. torchmcubes/texture_baker'daki CUDA
+sorunlarından FARKLI olarak bu, ÇALIŞMA ZAMANINDA JIT CUDA derlemesi
+gerektiriyor (yalnızca kurulumda değil) — `RasterizeGLContext` bile
+`RasterizeCudaContext`'in alt sınıfı olduğu için CUDA Toolkit'ten
+kaçılamıyor. Bu üçü, NVIDIA CUDA Toolkit kurulmadan bu makinede prensipte
+ÇALIŞAMAZ — CPU-fallback yamasıyla atlatılabilecek bir sorun değil. CUDA
+Toolkit kurulumu büyük/sistem geneli bir değişiklik olduğu için kullanıcı
+onayı olmadan yapılmadı.
+
+**OpenLRM üçüncü aile olarak canlı doğrulandı:** `nvdiffrast` kullanmıyor
+(saf PyTorch EG3D-tarzı `MipRayMarcher2` render + `PyMCubes` marching
+cubes) — bu yüzden tractable oldu. Yolda AYNI torch-gölgeleme kazası
+(bkz. SF3D notu) bir kez daha yaşandı ve aynı şekilde düzeltildi — artık
+bilinen, tekrarlayan bir risk olarak dokümante edildi. `LRMInferrer`'ın
+CLI/env-değişkeni tabanlı yapılandırması (`APP_MODEL_NAME`/`APP_INFER`)
+gradio app.py'nin kendi deseni taklit edilerek programatik hale getirildi.
+Canlı doğrulama (gerçek `/v1/jobs` API'si): portre fotoğrafından 7.3sn'de
+115.857 vertex/231.688 yüz — TripoSR/SF3D'den belirgin daha yoğun mesh
+üretiyor. Lisansı CC BY-NC 4.0 (ticari kullanım yok), UI'da gösteriliyor.
+Ayrıntılar docs/worker-envs.md'de.
+
+**Sıradaki adımlar:** Hunyuan3D-2 (shape+paint) — diffusers-uyumlu bir
+pipeline yapısına sahip (`model_index.json` var), muhtemelen InstantMesh/
+TRELLIS/CRM'den daha tractable, henüz araştırılmadı. InstantMesh/TRELLIS/
+CRM, CUDA Toolkit kurulmadıkça kapsam dışı kalacak.
 
 ---
 
