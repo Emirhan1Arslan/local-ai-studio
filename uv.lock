@@ -282,6 +282,7 @@ dev = [
     { name = "ruff" },
     { name = "studio-api" },
     { name = "studio-core" },
+    { name = "studio-workflows" },
 ]
 
 [package.metadata]
@@ -294,6 +295,7 @@ dev = [
     { name = "ruff", specifier = ">=0.6" },
     { name = "studio-api", editable = "backend/studio_api" },
     { name = "studio-core", editable = "backend/studio_core" },
+    { name = "studio-workflows", editable = "backend/studio_workflows" },
 ]
 
 [[package]]
