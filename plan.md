@@ -726,6 +726,74 @@ TRELLIS/CRM'in üçü de öncesinde kapsam dışıydı.
 
 **DoD:** "Prompt → FLUX → Upscale → BG Remove → Save" grafiği kurulur ve çalışır; ikinci çalıştırmada değişmeyen dallar cache'ten gelir; bozuk workflow yüklenince anlaşılır doğrulama hatası verir.
 
+**Durum (2026-07-20) — DoD karşılandı, fazın kalanı sürüyor.**
+
+**Adım 1 (graph çekirdeği) tamamlandı.** `backend/studio_workflows/`
+(önceden boş bir iskeletti) dolduruldu: `graph.py` tipli port sistemi
+(plan.md'nin saydığı image/latent/text/audio/video/mesh/tensor/any + kontrol
+akışı için gereken number/boolean), `NodeInstance`/`Edge`/`Graph` veri modeli
+ve DAG doğrulaması (bilinmeyen düğüm türü/port adı, port tipi uyumsuzluğu,
+bağlı olmayan zorunlu giriş, döngü tespiti) — hepsi düğüme/bağlantıya
+işaretlenebilir `GraphValidationError` mesajlarıyla. `executor.py` topolojik
+yürütme, **içerik-adresli node cache'i** (tür + çözümlenmiş parametreler +
+girdi değerlerinin hash'i; bir düğüm değişince altındaki her şey otomatik
+geçersizleşir çünkü onların girdi hash'i de değişir), hata yayılımı (üst
+düğüm hata verince ona bağımlı alt düğümler çalıştırılmadan `skipped`
+işaretlenir) ve workflow-seed + node-id'den deterministik seed türetme.
+
+**Adım 3 (node kütüphanesi) DoD kapsamında başlatıldı.** `nodes.py` iki
+yürütme stratejili bir kayıt defteri tanımlıyor: `JobDispatch` (mevcut
+Scheduler/Job altyapısına dispatch — kuyruk, worker süreci, VRAM yönetimi,
+iptal mantığı olduğu gibi yeniden kullanılıyor, yeniden icat edilmiyor) ve
+process-içi `InlineFn`. `node_library.py` DoD'nin gerektirdiği beş düğümü
+kaydediyor: `core.prompt`, `image.generate` (flux/sd3/sdxl), `image.upscale`,
+`image.bg_remove`, `core.save`. Plan'daki diğer node türleri (LLM,
+ControlNet, LoRA, IPAdapter, Segment, Caption, OCR, TTS, STT, Video, 3D,
+Python, HTTP, MCP Tool) ile adım 2'nin kontrol akışı node'ları **henüz
+yazılmadı** — kayıt defteri deseni onları eklemeye hazır.
+
+**Adım 4 (editör UI) DoD kapsamında yapıldı.** `@xyflow/react` (ADR-0010'un
+seçimi) kuruldu, `WorkflowPanel.tsx` yazıldı: kategoriye göre gruplanmış node
+paleti (backend'in `GET /v1/workflows/node-types` rotasından **dinamik**
+gelir — yeni node türü eklendiğinde UI'da kod değişikliği gerekmez), React
+Flow canvas'ı (pan/zoom, minimap), şemadan türetilen parametre editörü
+(string/number/boolean/enum/json) ve **iki katmanlı tip doğrulaması**:
+`isValidConnection` ile geçersiz bağlantı daha sürüklenirken bırakılamıyor
+(plan'ın istediği davranış), `onConnect`'te ayrıca açık hata mesajı.
+Düğümlerde canlı durum rengi (idle/running/done/failed/skipped), cache
+etiketi ve hata mesajı gösteriliyor. **Henüz yok:** grup/not, node arama
+paleti, kısmi çalıştırma ("bu node'a kadar" — adım 5), şablon galerisi
+(adım 6), ComfyUI import (adım 7).
+
+**Kalıcılık ve API.** `Workflow`/`WorkflowRun` modelleri (+ Alembic
+migration `1cff8b778e63`), `POST/GET/PUT/DELETE /v1/workflows`,
+`POST /v1/workflows/{id}/run`, `GET /v1/workflows/runs/{id}` ve node türü
+introspection rotası. Grafik **hem kaydederken hem çalıştırırken**
+doğrulanıyor. `workflow.*` olay topic'leri event bus'a eklendi. Cache,
+workflow_id başına process-içi tutuluyor — süreç yeniden başlayınca
+sıfırlanıyor (bilinçli MVP sınırı; kalıcı cache ileride).
+
+**DoD canlı doğrulandı (gerçek modeller, gerçek API).** "Prompt → SDXL →
+Upscale (RealESRGAN_x4plus, 512→2048) → BG Remove (BiRefNet) → Save" grafiği
+uçtan uca çalıştı; ikinci çalıştırmada **beş düğümün tamamı cache'ten geldi**
+(`from_cache=True`), çıktı geçerli bir 2048×2048 RGBA (alfa kanalı = arka
+plan gerçekten kaldırılmış). Bozuk workflow senaryoları (bilinmeyen düğüm
+türü, döngü, bağlı olmayan zorunlu giriş, bozuk şema) 400 + anlaşılır mesaj
+dönüyor. DoD metninde FLUX yazıyor ama bu makinede FLUX checkpoint'i diskte
+yok — SDXL ile test edildi; `image.generate` `model_family="flux"`'ı da
+destekliyor, dispatch mekanizması ailelerden bağımsız aynı.
+
+**Canlı test sırasında bulunan gerçek hata düzeltildi:** run geçmişi olan bir
+workflow'u silmek FK ihlaliyle 500 veriyordu — `Workflow.runs` ilişkisine
+cascade eklendi (regresyon testiyle birlikte).
+
+**Test durumu:** 44 yeni test (graph doğrulama, executor cache/hata
+yayılımı/seed determinizmi, node kütüphanesi param eşleme, gerçek
+Scheduler'a dispatch, /v1/workflows API'si) — tüm paket **203 test geçiyor**.
+`tsc -b` ve `pnpm build` temiz. **Doğrulanmayan:** panelin görsel render'ı
+tarayıcıda gözle görülmedi (bu makinede tarayıcı otomasyonu yok — MeshPanel'in
+Canvas render'ı için de aynı sınır geçerliydi).
+
 ---
 
 ### FAZ 11 — Agent Sistemi + Otomasyon (4–6 hafta)
