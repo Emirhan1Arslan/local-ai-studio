@@ -488,6 +488,148 @@ export async function sendChatMessage(
   return r.json();
 }
 
+export interface PortSpecInfo {
+  name: string;
+  type: string;
+  required: boolean;
+}
+
+export interface ParamSpecInfo {
+  name: string;
+  type: string;
+  default: unknown;
+  choices: string[] | null;
+}
+
+export interface NodeTypeInfo {
+  type_id: string;
+  category: string;
+  label: string;
+  inputs: PortSpecInfo[];
+  outputs: PortSpecInfo[];
+  params: ParamSpecInfo[];
+}
+
+export async function fetchNodeTypes(): Promise<NodeTypeInfo[]> {
+  const r = await req("/v1/workflows/node-types");
+  if (!r.ok) throw new Error(`node-types ${r.status}`);
+  return r.json();
+}
+
+export interface WorkflowNodeData {
+  id: string;
+  type: string;
+  params: Record<string, unknown>;
+  ui?: Record<string, unknown>;
+}
+
+export interface WorkflowEdgeData {
+  id: string;
+  from_node: string;
+  from_port: string;
+  to_node: string;
+  to_port: string;
+}
+
+export interface WorkflowGraphData {
+  nodes: WorkflowNodeData[];
+  edges: WorkflowEdgeData[];
+}
+
+export interface WorkflowInfo {
+  id: string;
+  name: string;
+  project_id: string | null;
+  graph: WorkflowGraphData;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchWorkflows(): Promise<WorkflowInfo[]> {
+  const r = await req("/v1/workflows");
+  if (!r.ok) throw new Error(`workflows ${r.status}`);
+  return r.json();
+}
+
+export async function fetchWorkflow(id: string): Promise<WorkflowInfo> {
+  const r = await req(`/v1/workflows/${id}`);
+  if (!r.ok) throw new Error(`workflow ${r.status}`);
+  return r.json();
+}
+
+async function postOrPutWorkflow(
+  method: "POST" | "PUT",
+  path: string,
+  name: string,
+  graph: WorkflowGraphData,
+): Promise<WorkflowInfo> {
+  const r = await req(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, graph }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `workflow ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function createWorkflow(name: string, graph: WorkflowGraphData): Promise<WorkflowInfo> {
+  return postOrPutWorkflow("POST", "/v1/workflows", name, graph);
+}
+
+export async function updateWorkflow(
+  id: string,
+  name: string,
+  graph: WorkflowGraphData,
+): Promise<WorkflowInfo> {
+  return postOrPutWorkflow("PUT", `/v1/workflows/${id}`, name, graph);
+}
+
+export async function deleteWorkflow(id: string): Promise<boolean> {
+  const r = await req(`/v1/workflows/${id}`, { method: "DELETE" });
+  if (!r.ok) return false;
+  return (await r.json()).ok;
+}
+
+export interface WorkflowNodeResult {
+  status: "done" | "failed" | "skipped";
+  outputs: Record<string, unknown>;
+  error: string;
+  from_cache: boolean;
+}
+
+export interface WorkflowRunInfo {
+  id: string;
+  workflow_id: string;
+  status: "running" | "done" | "failed";
+  seed: number;
+  node_results: Record<string, WorkflowNodeResult>;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export async function runWorkflow(id: string, seed = 0): Promise<WorkflowRunInfo> {
+  const r = await req(`/v1/workflows/${id}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seed }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `run ${r.status}`);
+  }
+  return r.json();
+}
+
+export async function fetchWorkflowRun(runId: string): Promise<WorkflowRunInfo> {
+  const r = await req(`/v1/workflows/runs/${runId}`);
+  if (!r.ok) throw new Error(`workflow run ${r.status}`);
+  return r.json();
+}
+
 export function openEventSocket(onEvent: (e: StudioEvent) => void): WebSocket {
   // Tauri kabuğu: sidecar adresi ws şemasına çevrilir + token sorgusu; dev: göreli.
   const wsBase = apiBase

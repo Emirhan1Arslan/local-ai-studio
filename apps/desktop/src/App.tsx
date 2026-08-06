@@ -20,6 +20,7 @@ import SystemPanel from "./panels/SystemPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import VideoPanel from "./panels/VideoPanel";
 import VramPanel from "./panels/VramPanel";
+import WorkflowPanel from "./panels/WorkflowPanel";
 import { useStudio } from "./state";
 
 const LAYOUT_KEY = "lais.layout.v1";
@@ -39,6 +40,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   audio: AudioPanel,
   video: VideoPanel,
   mesh: MeshPanel,
+  workflow: WorkflowPanel,
 };
 
 const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
@@ -48,6 +50,7 @@ const EXTRA_PANELS: { id: string; title: string; near: string }[] = [
   { id: "audio", title: "Ses", near: "chat" },
   { id: "video", title: "Video", near: "audio" },
   { id: "mesh", title: "3D", near: "video" },
+  { id: "workflow", title: "İş Akışı", near: "mesh" },
   { id: "downloads", title: "İndirmeler", near: "models" },
   { id: "explore", title: "Keşfet", near: "downloads" },
   { id: "queue", title: "Kuyruk", near: "models" },
