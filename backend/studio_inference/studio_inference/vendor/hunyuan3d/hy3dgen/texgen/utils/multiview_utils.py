@@ -31,9 +31,35 @@ class Multiview_Diffusion_Net():
         current_file_path = os.path.abspath(__file__)
         custom_pipeline_path = os.path.join(os.path.dirname(current_file_path), '..', 'hunyuanpaint')
 
-        pipeline = DiffusionPipeline.from_pretrained(
-            multiview_ckpt_path,
-            custom_pipeline=custom_pipeline_path, torch_dtype=torch.float16)
+        # Local AI Studio patch: config.unet verilmişse pipeline, from_pretrained
+        # yerine bileşen bileşen ELLE kurulur — adapters/mesh.py, checkpoint'teki
+        # kullanılmayan IP-Adapter anahtarlarını denetimli ayıklayan kendi UNet
+        # yükleyicisini kullanır (bkz. vendor/hunyuan3d/NOTICE.md "Texture/paint
+        # status"). from_pretrained(unet=...) kullanılamıyor: diffusers elden
+        # verilen bileşeni model_index'teki ("modules", ...) kaydına göre
+        # doğrularken `import modules` yapıyor ve saf nn.Module alt sınıfı için
+        # beklenen taban sınıfı bulamayıp TypeError veriyor.
+        preloaded_unet = getattr(config, 'unet', None)
+        if preloaded_unet is not None:
+            from diffusers import AutoencoderKL, DDIMScheduler
+            from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
+            from ..hunyuanpaint.pipeline import HunyuanPaintPipeline
+
+            pipeline = HunyuanPaintPipeline(
+                vae=AutoencoderKL.from_pretrained(
+                    multiview_ckpt_path, subfolder='vae', torch_dtype=torch.float16),
+                text_encoder=CLIPTextModel.from_pretrained(
+                    multiview_ckpt_path, subfolder='text_encoder', torch_dtype=torch.float16),
+                tokenizer=CLIPTokenizer.from_pretrained(multiview_ckpt_path, subfolder='tokenizer'),
+                unet=preloaded_unet,
+                scheduler=DDIMScheduler.from_pretrained(multiview_ckpt_path, subfolder='scheduler'),
+                feature_extractor=CLIPImageProcessor.from_pretrained(
+                    multiview_ckpt_path, subfolder='feature_extractor'),
+            )
+        else:
+            pipeline = DiffusionPipeline.from_pretrained(
+                multiview_ckpt_path,
+                custom_pipeline=custom_pipeline_path, torch_dtype=torch.float16)
 
         if config.pipe_name in ['hunyuanpaint']:
             pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config,

@@ -36,7 +36,7 @@ const FAMILIES: { id: Family; label: string; modelNameHint: string }[] = [
   { id: "triposr", label: "TripoSR — hafif, hızlı (~10sn, tek renkli vertex)", modelNameHint: "TripoSR" },
   { id: "sf3d", label: "Stable Fast 3D — dokulu/tekstürlü (~15sn)", modelNameHint: "stable-fast-3d" },
   { id: "openlrm", label: "OpenLRM — yüksek çözünürlüklü vertex-renkli (~10sn + ilk kullanımda ek indirme)", modelNameHint: "openlrm" },
-  { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh, dokusuz (~9sn)", modelNameHint: "hunyuan3d-dit" },
+  { id: "hunyuan3d", label: "Hunyuan3D-2 — yoğun mesh (~9sn), opsiyonel Paint dokusu", modelNameHint: "hunyuan3d-dit" },
   { id: "instantmesh", label: "InstantMesh — vertex-renkli ya da gerçek UV doku (~12sn, yüksek VRAM)", modelNameHint: "instant_mesh" },
   { id: "trellis", label: "TRELLIS — gerçek dokulu, sparse-voxel (~28sn, yüksek VRAM)", modelNameHint: "ss_flow_img_dit" },
   { id: "crm", label: "CRM — gerçek dokulu, iki aşamalı çoklu-görünüm (~40sn, en yüksek VRAM)", modelNameHint: "CRM" },
@@ -89,6 +89,7 @@ export default function MeshPanel() {
   // hunyuan3d'ye özgü
   const [numInferenceSteps, setNumInferenceSteps] = useState(30);
   const [octreeResolution, setOctreeResolution] = useState(256);
+  const [hyTexture, setHyTexture] = useState(false);
   // instantmesh'e özgü
   const [imSteps, setImSteps] = useState(50);
   const [imView, setImView] = useState<4 | 6>(6);
@@ -214,6 +215,7 @@ export default function MeshPanel() {
     } else if (family === "hunyuan3d") {
       params.num_inference_steps = numInferenceSteps;
       params.octree_resolution = octreeResolution;
+      params.texture = hyTexture;
     } else if (family === "instantmesh") {
       params.num_inference_steps = imSteps;
       params.view = imView;
@@ -312,10 +314,11 @@ export default function MeshPanel() {
             Hunyuan3D-2 ağırlıkları <strong>Tencent Hunyuan 3D 2.0 Community
             License</strong> ile gelir — AB/UK/Güney Kore hariç her yerde serbest,
             aylık 1M aktif kullanıcıyı aşan ürünler için Tencent'ten ayrı lisans
-            gerekir. Bu makinede yalnızca <strong>shape (dokusuz mesh)</strong>{" "}
-            üretimi çalışır — doku/boyama (paint) aşaması, nvdiffrast ile aynı
-            sınıftan bir CUDA Toolkit engeline takılıyor (bkz.
-            vendor/hunyuan3d/NOTICE.md).
+            gerekir. Varsayılan çıktı <strong>shape (dokusuz mesh)</strong>;
+            "Paint dokusu üret" açıksa delight + 6 görünümlü difüzyon + UV
+            pişirme ile 2048² dokulu GLB üretilir — Model Manager'da
+            hunyuan3d-delight-v2-0 ve hunyuan3d-paint-v2-0-turbo klasörleri
+            gerekir, daha fazla VRAM ve süre ister (bkz. vendor/hunyuan3d/NOTICE.md).
           </p>
         )}
         {family === "instantmesh" && (
@@ -528,6 +531,19 @@ export default function MeshPanel() {
                 yüksek değerler çok daha yoğun mesh üretir (384 ≈ 584K vertex, ~6GB VRAM)
               </p>
             </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={hyTexture}
+                onChange={(e) => setHyTexture(e.target.checked)}
+              />
+              Paint dokusu üret (delight + 6 görünüm difüzyonu + UV pişirme, 2048²)
+            </label>
+            {hyTexture && (
+              <p style={{ opacity: 0.6, margin: 0 }}>
+                mesh önce 40K yüze indirgenir; GLB'ye gömülü doku üretilir (OBJ: mtl+png)
+              </p>
+            )}
           </>
         )}
         {family === "instantmesh" && (

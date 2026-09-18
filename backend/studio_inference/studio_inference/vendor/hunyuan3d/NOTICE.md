@@ -72,27 +72,46 @@ check** — `accelerate`/`peft` resolution pulled unpinned CPU-only `torch` TWIC
 this (recurring bug, see `adapters/mesh.py` docstring); both times fixed with
 `uv pip uninstall torch torchvision` and reconfirmed `2.11.0+cu128, True`.
 
-### Texture/paint status: blocked by an upstream checkpoint/code mismatch (NOT CUDA)
+### Texture/paint status: WIRED (2026-09-18) — the "checkpoint/code mismatch" was dead code
 
-`hunyuan3d-paint-v2-0-turbo/unet/modules.py`'s `UNet2p5DConditionModel.from_pretrained`
-calls `unet.load_state_dict(ckpt, strict=True)` on a freshly-constructed UNet, but the
-released `.safetensors`/`.bin` checkpoint contains 36 extra IP-Adapter keys
-(`image_proj_model.{norm,proj}.{weight,bias}` + 32×
-`*.attn2.to_{k,v}_ip.weight`) that the constructed model never creates — `modules.py`
-never attaches an image-projection module or IP-Adapter attention processors before
-the strict load. **Confirmed NOT a local/version issue**: fetched the current `main`
-branch copy of this exact file from
-https://huggingface.co/tencent/Hunyuan3D-2/raw/main/hunyuan3d-paint-v2-0-turbo/unet/modules.py
-— byte-identical logic, same bug, still unpatched upstream as of 2026-07-20. Also
-found (unrelated but same-shaped issue in the same repo):
-https://github.com/Tencent-Hunyuan/Hunyuan3D-2/issues/280 (ShapeVAE missing-key
-mismatch). Correctly reconstructing the missing IP-Adapter wiring would mean guessing
-at Tencent's undocumented internal architecture from tensor shapes alone — a
-`strict=False` workaround would "succeed" but silently drop the trained IP-Adapter
-conditioning, producing plausible-but-wrong textures with no visible error. Not
-attempted. `family == "hunyuan3d"` in `adapters/mesh.py` therefore stays shape-only;
-`hy3dgen/texgen` is vendored (extensions build and the delight sub-pipeline loads
-fine) but not called from the adapter.
+History: `hunyuan3d-paint-v2-0-turbo/unet/modules.py`'s `from_pretrained` does
+`unet.load_state_dict(ckpt, strict=True)`, but the released
+`diffusion_pytorch_model.safetensors` (3.72 GB, fp16, 1571 keys — the community-
+requested upload, HF discussion #41) carries 36 extra IP-Adapter keys
+(`unet.image_proj_model.{norm,proj}.{weight,bias}` + 32×
+`*.attn2.to_{k,v}_ip.weight`) the constructed model never creates → strict load fails.
+Upstream `modules.py` is unchanged on `main` (re-checked 2026-09-18, both HF and
+GitHub). The earlier worry was that `strict=False` would silently drop trained
+conditioning. **Re-analysis shows those weights are unreachable in the released
+inference path**: `HunyuanPaintPipeline.__init__` does not even register
+`image_encoder`, `Multiview_Diffusion_Net.__call__` never passes `ip_adapter_image`,
+so `added_cond_kwargs` is `None` and no `to_k_ip`/`to_v_ip`/`image_proj_model` code
+exists to run. Dropping them builds exactly the network upstream's own code runs.
+
+Implementation (`adapters/mesh.py::_load_hunyuan3d_paint`, param `texture=True`):
+- UNet is built from `unet/config.json` via the vendored `UNet2p5DConditionModel`,
+  weights loaded with `strict=False` **under audit**: zero missing keys required, and
+  every unexpected key must match the known IP-Adapter pattern
+  (`classify_paint_unexpected_keys`) — anything else raises. Prefers `.safetensors`,
+  falls back to `.bin`.
+- `utils/multiview_utils.py` (local patch): when `config.unet` is preset, the
+  `HunyuanPaintPipeline` is assembled component-by-component (vae/text_encoder/
+  tokenizer/scheduler/feature_extractor via their own `from_pretrained`) instead of
+  `DiffusionPipeline.from_pretrained(unet=...)` — diffusers' passed-component type
+  check does `import modules` and then `issubclass(cls, None)` for a plain
+  `nn.Module` subclass (TypeError). Upstream path is untouched when `config.unet` is
+  absent. Note `paint/vae` and `paint/text_encoder` only exist as `.bin` upstream
+  (HF discussion #29) — loaded with `weights_only`, diffusers warns "unsafe
+  serialization".
+- Before painting the mesh goes through upstream's demo flow: `FloaterRemover` →
+  `DegenerateFaceRemover` → `FaceReducer(max_facenum=texture_max_faces, default
+  40000)`; xatlas UV-wrap happens inside the paint pipeline.
+- Live-verified on RTX 5090 (`hy_paint_live` smoke): shape 20 steps/256 →
+  paint → GLB with `TextureVisuals`, 40000 faces, 2048×2048 texture; total 79.3 s
+  (shape ~10 s, paint model load ~14 s, paint ~26 s, export ~24 s incl. FaceReducer),
+  peak VRAM 14872 MB → `vram_estimate` returns 16000 for `texture=True`.
+- The on-disk `modules.py` safetensors patch below is no longer needed by the
+  adapter (it never calls that file's `from_pretrained` now) but is kept as-is.
 
 One already-applied, unrelated local patch, needed regardless of the above:
 `hunyuan3d-paint-v2-0-turbo/unet/modules.py` **on disk in the Model Manager download**

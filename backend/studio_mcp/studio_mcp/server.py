@@ -480,7 +480,8 @@ def create_server(studio: StudioClient) -> MCPServer:
         """Tek görselden 3D mesh üretir. family: triposr (hızlı, vars.) | sf3d (dokulu) |
         openlrm | hunyuan3d | instantmesh | trellis (dokulu, en kaliteli) | crm.
         format: glb | obj | stl | ply. options: aileye özgü ek parametreler
-        (ör. {"num_inference_steps": 25, "texture_size": 1024})."""
+        (ör. trellis {"num_inference_steps": 25, "texture_size": 1024};
+        hunyuan3d {"texture": true} → Paint ile 2048² dokulu GLB, daha uzun sürer)."""
         params: dict[str, Any] = {
             "family": family,
             "image_path": image_path,

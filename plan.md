@@ -703,10 +703,26 @@ docs/worker-envs.md ve vendor/crm/NOTICE.md'de.
 **Kademeli liste TAMAMLANDI:** TripoSR, Stable Fast 3D, OpenLRM, Hunyuan3D-2
 (shape), InstantMesh, TRELLIS, CRM — yedi aile de canlı doğrulandı ve
 `MeshPanel.tsx`'e bağlandı, hepsi gerçek `/v1/jobs` API'si üzerinden test
-edildi. Tek istisna Hunyuan3D-2'nin texgen/paint aşaması (upstream'in
-kendi checkpoint/kod uyumsuzluğu, CUDA Toolkit'ten bağımsız bir engel).
-Bu fazın dönüm noktası NVIDIA CUDA Toolkit kurulumuydu — InstantMesh/
+edildi. Bu fazın dönüm noktası NVIDIA CUDA Toolkit kurulumuydu — InstantMesh/
 TRELLIS/CRM'in üçü de öncesinde kapsam dışıydı.
+
+**Hunyuan3D-2 Paint (doku) — 2026-09-18'de bağlandı, son istisna kalktı.**
+"Upstream checkpoint/kod uyumsuzluğu" yeniden incelendi: paint UNet
+checkpoint'indeki 36 IP-Adapter anahtarı, yayınlanan çıkarım kodunda hiç
+çağrılmayan ölü ağırlıklar (pipeline `image_encoder`'ı kaydetmiyor,
+`ip_adapter_image` geçilmiyor). `adapters/mesh.py::_load_hunyuan3d_paint`
+UNet'i denetimli `strict=False` ile yüklüyor (eksik anahtar sıfır, fazla
+anahtarların tamamı bilinen IP-Adapter deseni — aksi hâlde hata); vendor
+`multiview_utils.py` yaması pipeline'ı bileşen bileşen elle kuruyor
+(diffusers'ın `from_pretrained(unet=...)` tip doğrulaması saf nn.Module
+için TypeError veriyor). `texture=True` (+ `texture_max_faces`, vars. 40000)
+parametresi: FloaterRemover → DegenerateFaceRemover → FaceReducer →
+delight + 6 görünüm difüzyonu + UV pişirme → 2048² dokulu GLB. Canlı
+doğrulandı: 40000 yüz, TextureVisuals + 2048×2048 doku, toplam 79sn, tepe
+VRAM 14872MB (`vram_estimate` 16000). MeshPanel'e "Paint dokusu üret"
+onay kutusu, MCP `generate_3d` `options={"texture": true}` eklendi;
+4 yeni birim testi (anahtar sınıflandırma + kök çözümleme). Ayrıntı:
+vendor/hunyuan3d/NOTICE.md.
 
 ---
 

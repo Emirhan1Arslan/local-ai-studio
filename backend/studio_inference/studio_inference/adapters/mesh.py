@@ -1,7 +1,7 @@
 """Mesh (3D) adapter'ı (Faz 9): Image-to-3D — kademeli liste (plan.md adım 1).
 TripoSR (hafif, hızlı), Stable Fast 3D (SF3D, dokulu/tekstürlü çıktı),
 OpenLRM (vertex-renkli, EG3D tarzı saf-PyTorch NeRF renderer),
-Hunyuan3D-2 (yalnızca shape — bkz. aşağı), InstantMesh (LRM+FlexiCubes,
+Hunyuan3D-2 (shape + opsiyonel Paint dokusu — bkz. aşağı), InstantMesh (LRM+FlexiCubes,
 zero123plus çoklu-görünüm difüzyonu üzerine), TRELLIS (sparse-voxel
 yapı + structured latent, gerçek dokulu çıktı) ve CRM (Convolutional
 Reconstruction Model, iki aşamalı çoklu-görünüm difüzyonu + nvdiffrast
@@ -38,18 +38,21 @@ modülünün bir şekil-doğrulama yardımcısı (`check_tensor`) için import
 ediliyordu, yerel bir eşdeğerle değiştirildi. Ayrıntılar
 vendor/trellis/NOTICE.md'de.
 
-Hunyuan3D-2'nin shape (`hy3dgen.shapegen`) kısmı eklendi. texgen/paint
-(doku/boyama) kısmı VENDOR EDİLDİ (`vendor/hunyuan3d/hy3dgen/texgen`,
-`custom_rasterizer_kernel`/`mesh_processor` ikisi de bu makinede derlendi
-ve çalışıyor) ama adapter'a BAĞLANMADI: `hunyuan3d-paint-v2-0-turbo`'nun
-UNet checkpoint'i, yüklenen modelin sahip olmadığı 36 IP-Adapter anahtarı
-içeriyor (`image_proj_model.*`, `*.attn2.to_{k,v}_ip.weight`) —
-upstream'in kendi `modules.py`'si bu anahtarları oluşturmadan
-`strict=True` ile yüklemeye çalışıyor. HuggingFace'teki GÜNCEL ana dal
-kopyasıyla karşılaştırılıp doğrulandı: yerel/sürüm sorunu değil, hâlâ
-düzeltilmemiş bir upstream hatası. Ayrıntılar vendor/hunyuan3d/NOTICE.md'de.
-Bu makinede Hunyuan3D-2 çıktısı dokusuz (vertex-renksiz) mesh'tir —
-triposr'ın ham çıktısıyla aynı sınıfta.
+Hunyuan3D-2: shape (`hy3dgen.shapegen`) + opsiyonel Paint dokusu
+(`texture=True`, `hy3dgen.texgen`). Paint uzun süre "upstream checkpoint/kod
+uyumsuzluğu" diye engelli sayıldı: `hunyuan3d-paint-v2-0-turbo` UNet
+checkpoint'i, `modules.py`'nin oluşturmadığı 36 IP-Adapter anahtarı
+(`unet.image_proj_model.*`, `*.attn2.to_{k,v}_ip.weight`) taşıyor ve upstream
+`strict=True` ile yüklüyor. 2026-09-18'de yeniden incelendi: yayınlanan
+çıkarım kodu bu ağırlıkları HİÇ ÇAĞIRMIYOR — `HunyuanPaintPipeline.__init__`
+`image_encoder`'ı kayıt bile etmiyor, `Multiview_Diffusion_Net.__call__`
+`ip_adapter_image` geçmiyor, dolayısıyla `added_cond_kwargs=None` ve
+`to_k_ip/to_v_ip` yolu ölü kod. Yani bu anahtarları ayıklamak eğitilmiş bir
+koşullamayı "sessizce düşürmek" değil, upstream'in kendi çıkarım yoluyla
+birebir aynı ağı kurmaktır. `_load_hunyuan3d_paint()` UNet'i `strict=False`
+yükler ama DENETİMLİ: eksik anahtar sıfır olmalı ve beklenmeyen anahtarların
+TAMAMI bu bilinen IP-Adapter desenine uymalı — aksi hâlde hata (bkz.
+`classify_paint_unexpected_keys`). Ayrıntılar vendor/hunyuan3d/NOTICE.md'de.
 
 DİKKAT: Bu modül worker env'inde (envs/3d) çalışır. torch/tsr/sf3d/openlrm/
 hy3dgen/src(instantmesh)/trellis/crm/rembg/trimesh importları metod
@@ -99,6 +102,12 @@ hunyuan3d'ye özgü:
 - num_inference_steps: diffusion adım sayısı (vars. 30)
 - octree_resolution: hacim kod çözme ızgara çözünürlüğü (vars. 256 —
   upstream varsayılanı 384'tür ama ~584K vertex üretiyor, 256 daha hafif)
+- texture: bool (vars. False) — True ise Hunyuan3D-Paint (delight +
+  6 görünümlü difüzyon + UV pişirme) ile 2048² dokulu mesh üretir. Model
+  Manager kökünde (`.../Hunyuan3D-2/`) `hunyuan3d-delight-v2-0` ve
+  `hunyuan3d-paint-v2-0-turbo` klasörleri gerekir; yalnız CUDA.
+- texture_max_faces: doku öncesi yüz indirgeme hedefi (vars. 40000 —
+  upstream demo akışı: FloaterRemover + DegenerateFaceRemover + FaceReducer)
 
 instantmesh'e özgü:
 - num_inference_steps: zero123plus çoklu-görünüm difüzyon adım sayısı
@@ -132,6 +141,7 @@ output_path: .glb/.obj/.stl/.ply (zorunlu — uzantıya göre trimesh formatı s
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from collections.abc import Iterator
@@ -298,7 +308,6 @@ def _load_hunyuan3d_pipeline(repo: str, device: str):
     boş bırakılıp varsayılan HF repo id'si kullanıldıysa) upstream'in kendi
     `from_pretrained`/`smart_load_model` akışına düşülüyor."""
     import torch
-
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     dtype = torch.float16 if device == "cuda" else torch.float32
@@ -338,7 +347,9 @@ def _load_instantmesh(repo: str, device: str) -> dict:
     dtype = torch.float16 if device == "cuda" else torch.float32
 
     zero123plus_dir = os.path.join(os.path.dirname(repo), "zero123plus-v1.2")
-    zero123plus_repo = zero123plus_dir if os.path.isdir(zero123plus_dir) else "sudo-ai/zero123plus-v1.2"
+    zero123plus_repo = (
+        zero123plus_dir if os.path.isdir(zero123plus_dir) else "sudo-ai/zero123plus-v1.2"
+    )
     pipeline = DiffusionPipeline.from_pretrained(
         zero123plus_repo,
         custom_pipeline=os.path.join(vendor_dir, "zero123plus"),
@@ -353,7 +364,6 @@ def _load_instantmesh(repo: str, device: str) -> dict:
     pipeline = pipeline.to(device)
 
     from omegaconf import OmegaConf
-
     from src.utils.train_util import instantiate_from_config
 
     config = OmegaConf.load(os.path.join(vendor_dir, "configs", "instant-mesh-base.yaml"))
@@ -449,6 +459,83 @@ def _load_crm(repo: str, device: str) -> dict:
     return {"model": model, "pipeline": pipeline}
 
 
+_PAINT_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"
+_DELIGHT_SUBFOLDER = "hunyuan3d-delight-v2-0"
+# Yayınlanan paint checkpoint'inde bulunan ama çıkarım kodunun hiç kullanmadığı
+# IP-Adapter anahtarları (modül docstring'i) — strict=False yüklemede yalnız
+# bunlara göz yumulur.
+_PAINT_IP_ADAPTER_KEY_RE = re.compile(r"(^|\.)image_proj_model\.|\.attn2\.to_[kv]_ip\.weight$")
+
+
+def classify_paint_unexpected_keys(unexpected: list[str]) -> list[str]:
+    """Bilinen IP-Adapter deseni DIŞINDA kalan beklenmeyen anahtarları döner
+    (boş liste = yükleme güvenli)."""
+    return [k for k in unexpected if not _PAINT_IP_ADAPTER_KEY_RE.search(k)]
+
+
+def paint_root_for(repo: str) -> str | None:
+    """Shape modelinin klasöründen (`.../Hunyuan3D-2/hunyuan3d-dit-v2-0-fast`)
+    Paint bileşenlerini barındıran Model Manager kökünü çözer; delight ve paint
+    klasörlerinden biri yoksa None."""
+    for root in (repo, os.path.dirname(repo.rstrip("/\\"))):
+        if os.path.isdir(os.path.join(root, _DELIGHT_SUBFOLDER)) and os.path.isdir(
+            os.path.join(root, _PAINT_SUBFOLDER)
+        ):
+            return root
+    return None
+
+
+def _load_hunyuan3d_paint(root: str, device: str):
+    """Hunyuan3D-Paint'i, UNet'i kendimiz denetimli yükleyerek kurar (modül
+    docstring'indeki IP-Adapter anahtarı açıklaması). Delight (InstructPix2Pix)
+    ve pipeline'ın kalan bileşenleri upstream akışıyla yüklenir."""
+    import json
+
+    import torch
+    from diffusers import UNet2DConditionModel
+    from hy3dgen.texgen.hunyuanpaint.unet.modules import UNet2p5DConditionModel
+    from hy3dgen.texgen.pipelines import Hunyuan3DPaintPipeline, Hunyuan3DTexGenConfig
+
+    if device != "cuda":
+        raise RuntimeError("Hunyuan3D-Paint dokusu için CUDA gerekli (custom_rasterizer)")
+
+    unet_dir = os.path.join(root, _PAINT_SUBFOLDER, "unet")
+    with open(os.path.join(unet_dir, "config.json"), encoding="utf-8") as f:
+        config = json.load(f)
+    unet = UNet2p5DConditionModel(UNet2DConditionModel(**config))
+
+    st_path = os.path.join(unet_dir, "diffusion_pytorch_model.safetensors")
+    if os.path.isfile(st_path):
+        from safetensors.torch import load_file
+
+        state = load_file(st_path)
+    else:
+        state = torch.load(
+            os.path.join(unet_dir, "diffusion_pytorch_model.bin"),
+            map_location="cpu",
+            weights_only=True,
+        )
+    missing, unexpected = unet.load_state_dict(state, strict=False)
+    bad = classify_paint_unexpected_keys(list(unexpected))
+    if missing or bad:
+        raise RuntimeError(
+            "Hunyuan3D-Paint UNet checkpoint'i beklenen mimariyle uyuşmuyor — "
+            f"eksik: {list(missing)[:5]} ({len(missing)}), "
+            f"bilinmeyen fazla: {bad[:5]} ({len(bad)})"
+        )
+    del state
+    unet = unet.to(torch.float16)
+
+    tex_config = Hunyuan3DTexGenConfig(
+        os.path.join(root, _DELIGHT_SUBFOLDER),
+        os.path.join(root, _PAINT_SUBFOLDER),
+        _PAINT_SUBFOLDER,
+    )
+    tex_config.device = device
+    tex_config.unet = unet  # vendor multiview_utils.py yaması bunu okur
+    return Hunyuan3DPaintPipeline(tex_config)
+
+
 def _resolve_repo(model_path: str, family: str) -> str:
     repo = model_path or _FAMILY_DEFAULT_REPO[family]
     # Model Browser tekil bir ağırlık dosyası verebilir (config.yaml/.ckpt/
@@ -464,12 +551,12 @@ class MeshAdapter:
         self._family = ""
         self._model_path = ""
         self._device = "cpu"
+        self._paint = None
+        self._paint_root = ""
 
     def load(self, model_path: str, family: str = "triposr", **kwargs: Any) -> None:
         if family not in _FAMILY_VENDOR_DIR:
-            raise RuntimeError(
-                f"bilinmeyen family: {family!r} ({', '.join(_FAMILY_VENDOR_DIR)})"
-            )
+            raise RuntimeError(f"bilinmeyen family: {family!r} ({', '.join(_FAMILY_VENDOR_DIR)})")
         _ensure_vendor_on_path(family)
         try:
             import torch
@@ -537,7 +624,7 @@ class MeshAdapter:
         t0 = time.time()
 
         def _progress(msg: str) -> dict:
-            return {"event": "progress", "message": f"[{time.time()-t0:6.1f}s] {msg}"}
+            return {"event": "progress", "message": f"[{time.time() - t0:6.1f}s] {msg}"}
 
         yield _progress("görsel hazırlanıyor…")
         image = Image.open(image_path).convert("RGBA")
@@ -641,14 +728,36 @@ class MeshAdapter:
                 num_inference_steps=num_inference_steps,
                 octree_resolution=octree_resolution,
             )[0]
+            if bool(params.get("texture", False)):
+                from hy3dgen.shapegen import DegenerateFaceRemover, FaceReducer, FloaterRemover
+
+                root = paint_root_for(_resolve_repo(model_path, family))
+                if root is None:
+                    raise RuntimeError(
+                        "texture=true için Model Manager'daki Hunyuan3D-2 kökünde "
+                        f"'{_DELIGHT_SUBFOLDER}' ve '{_PAINT_SUBFOLDER}' klasörleri gerekli — "
+                        "Model Browser'dan tencent/Hunyuan3D-2 snapshot'ını bu alt "
+                        "klasörlerle indirin"
+                    )
+                if self._paint is None or self._paint_root != root:
+                    self._paint = None
+                    yield _progress("doku modeli yükleniyor (delight + çoklu-görünüm UNet)…")
+                    self._paint = _load_hunyuan3d_paint(root, self._device)
+                    self._paint_root = root
+                max_faces = int(params.get("texture_max_faces", 40000))
+                yield _progress(f"doku öncesi mesh temizliği + {max_faces} yüze indirgeme…")
+                mesh = FloaterRemover()(mesh)
+                mesh = DegenerateFaceRemover()(mesh)
+                mesh = FaceReducer()(mesh, max_facenum=max_faces)
+                yield _progress("doku üretimi: delight + 6 görünüm difüzyonu + UV pişirme…")
+                mesh = self._paint(mesh, image)
         elif family == "instantmesh":
             import numpy as np
             import torch
             import trimesh
             from einops import rearrange
-            from torchvision.transforms import v2
-
             from src.utils.camera_util import get_zero123plus_input_cameras
+            from torchvision.transforms import v2
 
             num_inference_steps = int(params.get("num_inference_steps", 50))
             view = int(params.get("view", 6))
@@ -738,7 +847,6 @@ class MeshAdapter:
             )
         elif family == "crm":
             import trimesh
-
             from inference import generate3d
 
             num_inference_steps = int(params.get("num_inference_steps", 30))
@@ -793,6 +901,8 @@ class MeshAdapter:
 
     def unload(self) -> None:
         self._model = None
+        self._paint = None
+        self._paint_root = ""
         try:
             import torch
 
@@ -808,6 +918,11 @@ class MeshAdapter:
         # octree_resolution=384 (upstream varsayılanı) ile tepe VRAM 5983MB;
         # UI varsayılanı 256 daha hafif ama kullanıcı 384'e çıkarabilir, pay
         # bırakılıyor.
+        if family == "hunyuan3d" and params.get("texture"):
+            # Canlı ölçüldü (2026-09-18): shape 20 adım/256 + delight + dual-stream
+            # paint UNet (1.86B param fp16) + 2048² render/pişirme ile tepe VRAM
+            # 14872MB, toplam 79sn (paint ~46sn, ~14sn'si model yükleme).
+            return 16_000
         if family in ("sf3d", "hunyuan3d"):
             return 6_500
         if family == "instantmesh":
