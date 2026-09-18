@@ -382,6 +382,30 @@ konuşma üretildi (model yükleme 9.4sn, sentez 3.1sn), faster-whisper
 - Adım 3 kalan: F5-TTS, CosyVoice, Bark, kayıtlı ses klon profili yönetimi
 - Adım 5: müzik/ses üretimi (MusicGen, Stable Audio Open)
 
+**Durum (2026-09-18) — kalanların bir kısmı kapatıldı.** Kullanıcı Faz 7/8
+kalanlarının bitirilmesini istedi; env kısıtı belirleyici oldu: **WhisperX 3.8.6
+`torch==2.8` + `numpy 2.2` + pyannote 4 zorluyor**, F5-TTS `torch 2.14` +
+`transformers 5.17` + `huggingface-hub 1.32` çekiyor — ikisi de "sistem torch'a
+dokunma / audio env pinleri" kuralıyla çakışıyor (uv dry-run ile görüldü).
+- **Kelime hizalaması (adım 1):** WhisperX yerine faster-whisper'ın yerleşik
+  `word_timestamps=True` (cross-attention DTW) — JSON `segments[].words`
+  (start/end/word/probability). Ek paket yok; canlı doğrulandı.
+- **Diarization (adım 1):** pyannote 4 gated HF modelleri (`pyannote/
+  speaker-diarization-community-1`) + HF token + torch 2.8 ister; bu makinede
+  HF token yok → ERTELENDİ (ayrı `envs/audiox` venv'i + token gerektirir).
+  Parakeet (NeMo) Windows'ta desteklenmiyor → ertelendi.
+- **Toplu klasör transkripsiyonu (adım 2):** `op=stt_batch` — klasördeki tüm
+  ses/video tek işte tek model yüklemesiyle; özet json + dosya başına json/txt/
+  srt/vtt; AudioPanel klasör yolu alanı, MCP `transcribe_folder`.
+- **Bark (adım 3):** transformers `BarkModel` (suno/bark-small, MIT, 13 dil
+  presetleri, `[laughs]`/`♪` işaretleri); cümle bölme + birleştirme; Model
+  Manager `tts/bark-small` (yalnız `pytorch_model.bin` yayınlanmış — safetensors
+  yok, `weights_only` ile yüklenir). AudioPanel sekmesi, MCP `voice_preset`.
+- **F5-TTS / CosyVoice / klon profili yönetimi:** F5-TTS ayrı venv ister
+  (`--no-deps` + elle bağımlılık); CosyVoice pynini/ttsfrd zinciri Windows'ta
+  sorunlu → ikisi de ERTELENDİ; klon profili yönetimi (kayıtlı speaker_wav
+  kütüphanesi) küçük bir CRUD işi olarak bekliyor.
+
 Bilinen sınır: Kokoro'nun varsayılan sesleri yalnızca İngilizce fonemleştirme
 yapıyor — Türkçe metin İngilizce okunuş kurallarıyla telaffuz ediliyor (bkz.
 docs/worker-envs.md). **Çözüldü:** XTTS-v2 motoru (Ses panelinde seçilebilir)
@@ -462,6 +486,23 @@ CogVideoX/LTX ile devam edildi.
   doğrulama gerektiriyor
 - Adım 4 kalan: RIFE kare interpolasyonu — `rife-ncnn-vulkan-python` PyPI'da
   yalnızca kaynak dağıtım, Vulkan SDK + C++ derleyici zinciri gerektiriyor
+
+**Durum (2026-09-18) — adım 3 fp8 ve adım 4 RIFE KAPATILDI.**
+- **RIFE:** ncnn/Vulkan yolu yerine Practical-RIFE v4.25'in saf-PyTorch IFNet'i
+  vendor edildi (`vendor/rife`, MIT; upstream'in Google-Drive-only `flownet.pkl`'i
+  bir kez safetensors'a çevrilip `models/video/RIFE-4.25/` altına konuldu, Model
+  Manager listeliyor). videotool `op=interpolate` (multi 2-8, scale, ses
+  korunur); VideoPanel "kare hızını artır", MCP `interpolate_video`. Canlı:
+  704×480 121 kare → 241 kare / 50 fps, 14 sn, tepe VRAM 448 MB (fp32 —
+  coarse-to-fine akış fp16'ya duyarlı).
+- **fp8:** torchao `Float8WeightOnlyConfig` ile transformer weight-only
+  nicemleme (`quantization=fp8`). torchao 0.18 diffusers 0.33'ün import'unu
+  kırdı (`single_file` → tanımsız logger) → **0.10.0 pini**. Canlı (LTX
+  512×320×25, 20 adım): tepe VRAM 14.0 → 12.2 GB, üretim 2.1 → 2.8 sn, çıktı
+  eşdeğer; büyük transformer'lı ailelerde (Wan/Hunyuan) kazanç daha yüksek.
+  `vram_mode=low` ile birleşmez (device_map yükleme).
+- Kalan: HunyuanVideo/Mochi canlı doğrulama (RAM), mid-diffusion resume,
+  Pyramid Flow / SkyReels.
 
 Kurulum notu: LTX-Video, `envs/image`'ın diffusers'ında hazır çıktı
 (`LTXPipeline`/`LTXImageToVideoPipeline`) — ayrı bir video env'i gerekmedi,

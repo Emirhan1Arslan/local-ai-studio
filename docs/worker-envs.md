@@ -1323,3 +1323,8 @@ API'yi tanımıyor ve hata yolunda tanımsız logger kullanıyor. 0.10.0 ile imp
 (sm_120 için özel kernel gerekmiyor). Video adapter'ında `quantization: fp8`
 (`_quantize_fp8`, transformer GPU'ya alınıp `quantize_` uygulanır, sonra offload kancaları).
 `vram_mode=low` (device_map yükleme) ile birleşmez.
+
+Canlı (RTX 5090, LTX 512×320×25 kare, 20 adım, aynı seed): bf16 tepe VRAM 14.0 GB →
+fp8 12.2 GB (−13%; LTX'in 2B transformer'ı küçük, T5-XXL kodlayıcı baskın — Wan/Hunyuan
+gibi büyük transformer'larda oran büyür), üretim 2.1 → 2.8 sn (weight-only dequant maliyeti),
+nicemleme yükleme süresine ~13 sn ekler. Çıktı görsel olarak eşdeğer.
