@@ -15,7 +15,7 @@ from studio_core.db import session_scope
 from studio_core.logging import get_logger
 from studio_core.models import ModelRecord
 
-from studio_models.metadata import MODEL_EXTS, extract_group, group_key
+from studio_models.metadata import MODEL_EXTS, extract_group, group_family, group_key
 
 log = get_logger("studio_models.scanner")
 
@@ -34,6 +34,16 @@ class ScanResult:
 
 def _record_summary(rec: ModelRecord) -> dict:
     return {"id": rec.id, "name": rec.name, "kind": rec.kind, "path": rec.path}
+
+
+def _family_stale(rec: ModelRecord, key: str) -> bool:
+    """Boyutu değişmemiş ama `family`'si boş kalmış çok bileşenli bir kayıt, tarayıcı
+    aile tespiti öğrendikten sonra (group_family) bir kez yeniden çıkarılır — aksi
+    hâlde eski kayıtlar UI/MCP'nin image|imagex yönlendirmesi için kör kalır."""
+    if rec.family:
+        return False
+    root = Path(key)
+    return root.is_dir() and group_family(root)[0] != ""
 
 
 def scan() -> ScanResult:
@@ -74,7 +84,7 @@ def scan() -> ScanResult:
                 session.add(rec)
                 session.flush()
                 result.added.append(_record_summary(rec))
-            elif rec.size_bytes != total_size:
+            elif rec.size_bytes != total_size or _family_stale(rec, key):
                 data = extract_group(key, group_paths, root)
                 for k, v in data.items():
                     setattr(rec, k, v)
