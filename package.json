@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "pnpm --filter desktop dev",
-    "build": "pnpm --filter desktop build"
+    "build": "pnpm --filter desktop build",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-studio.ps1",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-studio.ps1 -Stop"
   },
   "packageManager": "pnpm@10.32.1"
 }
