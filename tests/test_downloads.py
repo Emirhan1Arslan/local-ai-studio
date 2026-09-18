@@ -391,3 +391,36 @@ def test_rate_limiter_throttles_to_configured_rate(client, monkeypatch):
     # gelmiş gibi ölçülür: 1. chunk beklemez, 2. ~1sn, 3. ~2sn (kümülatif zamanlama) bekler.
     assert len(slept) == 2
     assert sum(slept) == pytest.approx(3.0, abs=0.1)
+
+
+def test_recover_requeues_and_restart_lists_orphans(dl_client):
+    """Regresyon (2026-09-18 canlı): görevler yalnız bellekte yaşar; süreç yeniden
+    başlayınca 'queued' kayıtlar sahipsiz kalıp sonsuza dek beklerdi. recover()
+    'downloading'i kuyruğa geri alır, pending_ids() görevi olmayan kuyruğu listeler."""
+    from studio_core.db import session_scope
+    from studio_core.models import Download, DownloadStatus
+
+    dest = get_settings().models_dir / "checkpoints"
+    with session_scope() as s:
+        crashed = Download(
+            url="http://x/a",
+            source="hf",
+            dest_path=str(dest / "a.bin"),
+            status=DownloadStatus.DOWNLOADING,
+        )
+        orphan = Download(
+            url="http://x/b",
+            source="url",
+            dest_path=str(dest / "b.bin"),
+            status=DownloadStatus.QUEUED,
+        )
+        s.add_all([crashed, orphan])
+        s.flush()
+        crashed_id, orphan_id = crashed.id, orphan.id
+
+    downloader.manager.recover()
+    pending = dict(downloader.manager.pending_ids())
+    assert pending[crashed_id] == "hf"  # artık queued ve görevsiz → yeniden başlatılacak
+    assert pending[orphan_id] == "url"
+    with session_scope() as s:
+        assert s.get(Download, crashed_id).status == DownloadStatus.QUEUED

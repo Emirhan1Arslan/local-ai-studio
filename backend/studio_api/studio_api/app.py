@@ -150,6 +150,7 @@ def create_app() -> FastAPI:
         download_manager.reset()
         download_manager.set_emit(bus.emit)
         await asyncio.to_thread(download_manager.recover)
+        download_manager.restart_pending()  # loop içinde: sahipsiz kuyruk görevleri
         watcher = ModelWatcher(on_models_changed)
         watcher.start()
 

@@ -6,7 +6,8 @@ Tasarım:
 - Resume: .part varsa `Range: bytes=N-` gönderilir; sunucu 200 dönerse (Range desteklemiyor)
   baştan başlanır. Hash, .part'ın mevcut kısmı yeniden okunarak sürdürülür.
 - Pause = task iptali + .part korunur; Cancel = task iptali + .part silinir.
-- Süreç yeniden başlarsa 'downloading' kalmış kayıtlar 'paused'a çekilir (recover()).
+- Süreç yeniden başlarsa 'downloading' kalmış kayıtlar kuyruğa geri alınır (recover())
+  ve sahipsiz tüm 'queued' kayıtlar yeniden başlatılır (restart_pending()).
 - Hız sınırı (Faz 8'de eklendi, kullanıcı isteğiyle): tüm eşzamanlı indirmeler
   arasında PAYLAŞILAN tek bir _RateLimiter — Ayarlar/İndirmeler panelinden
   (settings.download_speed_limit_mbps) canlı değiştirilebilir, restart gerekmez.
@@ -107,12 +108,44 @@ class DownloadManager:
     # -- kuyruk yönetimi ---------------------------------------------------
 
     def recover(self) -> None:
-        """Açılışta: süreçle birlikte ölen 'downloading' kayıtlarını paused'a çek."""
+        """Açılışta: süreçle birlikte ölen 'downloading' kayıtlarını kuyruğa geri al.
+
+        .part dosyası diskte durur ve `_download` Range ile kaldığı yerden sürer; bu
+        yüzden 'paused' değil 'queued' — `restart_pending()` hepsini yeniden başlatır."""
         with session_scope() as session:
             for rec in session.query(Download).filter(
                 Download.status == DownloadStatus.DOWNLOADING
             ):
-                rec.status = DownloadStatus.PAUSED
+                rec.status = DownloadStatus.QUEUED
+
+    def pending_ids(self) -> list[tuple[str, str]]:
+        """Görevi olmayan 'queued' kayıtlar: (id, source) — açılışta ya da bir süreç
+        yeniden başlatmasından sonra sahipsiz kalanlar."""
+        with session_scope() as session:
+            rows = (
+                session.query(Download)
+                .filter(Download.status == DownloadStatus.QUEUED)
+                .order_by(Download.created_at)
+                .all()
+            )
+            return [(r.id, r.source) for r in rows if r.id not in self._tasks]
+
+    def restart_pending(self) -> int:
+        """Event loop içinde çağrılır: sahipsiz kuyruk kayıtları için görev başlatır.
+        Görevler yalnız bellekte yaşadığından, bu olmadan bir yeniden başlatma
+        sonrası kuyruk sonsuza dek 'queued' kalırdı (2026-09-18 canlıda görüldü).
+        HF kaynaklı indirmelerin yetki başlığı ayarlardaki token'dan yeniden kurulur."""
+        settings = get_settings()
+        started = 0
+        for download_id, source in self.pending_ids():
+            headers: dict[str, str] = {}
+            if source == "hf" and settings.hf_token:
+                headers["Authorization"] = f"Bearer {settings.hf_token}"
+            self._start_task(download_id, headers)
+            started += 1
+        if started:
+            log.info("downloads_restarted", count=started)
+        return started
 
     async def enqueue(
         self,
