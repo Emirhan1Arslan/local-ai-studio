@@ -37,6 +37,12 @@ class JobDispatchError(Exception):
 def _output_ext(kind: str, params: dict[str, Any]) -> str:
     if kind == "imgtool":
         return "png" if params.get("op") in _IMGTOOL_IMAGE_OPS else "json"
+    if kind == "audio":
+        return "wav" if params.get("op") == "tts" else "json"
+    if kind in ("video", "videotool"):
+        return str(params.get("format", "mp4") or "mp4")
+    if kind in ("mesh", "meshtool"):
+        return str(params.get("format", "glb") or "glb")
     return _EXT_BY_KIND.get(kind, "bin")
 
 

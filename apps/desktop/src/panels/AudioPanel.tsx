@@ -13,7 +13,17 @@ import {
 import { useStudio } from "../state";
 
 type Mode = "stt" | "tts";
-type Engine = "kokoro" | "xtts";
+type Engine = "kokoro" | "xtts" | "bark";
+
+// Bark (Suno, MIT) hazır konuşmacı presetleri — 13 dil; Türkçe dahil.
+const BARK_PRESETS: [string, string][] = [
+  ...Array.from({ length: 10 }, (_, i) => [`v2/tr_speaker_${i}`, `Türkçe konuşmacı ${i}`] as [string, string]),
+  ...Array.from({ length: 10 }, (_, i) => [`v2/en_speaker_${i}`, `İngilizce konuşmacı ${i}`] as [string, string]),
+  ["v2/de_speaker_3", "Almanca konuşmacı 3"],
+  ["v2/fr_speaker_1", "Fransızca konuşmacı 1"],
+  ["v2/es_speaker_2", "İspanyolca konuşmacı 2"],
+  ["v2/ja_speaker_4", "Japonca konuşmacı 4"],
+];
 
 const VOICES: [string, string][] = [
   ["af_heart", "Heart (kadın, A. İngilizcesi)"],
@@ -79,6 +89,8 @@ export default function AudioPanel() {
   const [sttModels, setSttModels] = useState<ModelInfo[]>([]);
   const [sttModelPath, setSttModelPath] = useState("");
   const [language, setLanguage] = useState("");
+  const [wordTimestamps, setWordTimestamps] = useState(true);
+  const [batchDir, setBatchDir] = useState("");
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunks = useRef<Blob[]>([]);
@@ -96,6 +108,8 @@ export default function AudioPanel() {
   const [speakerFile, setSpeakerFile] = useState<{ path: string; name: string } | null>(null);
   const [xttsLanguage, setXttsLanguage] = useState("tr");
   const [consent, setConsent] = useState(false);
+  const [barkPreset, setBarkPreset] = useState("v2/tr_speaker_0");
+  const [barkModelPath, setBarkModelPath] = useState("");
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -122,6 +136,7 @@ export default function AudioPanel() {
   // ses paketleri (voices/*.pt) karışık listelenir — her seçici kendi ilgili
   // dosyasına göre filtreler.
   const kokoroModels = ttsModels.filter((m) => m.name === "Kokoro-82M");
+  const barkModels = ttsModels.filter((m) => m.name.toLowerCase().includes("bark"));
   const xttsModels = ttsModels.filter(
     (m) => m.name === "XTTS-v2" && m.path.toLowerCase().endsWith("model.pth"),
   );
@@ -209,17 +224,33 @@ export default function AudioPanel() {
     setFormError("");
     const params: Record<string, unknown> = { op: mode };
     if (mode === "stt") {
-      if (!audioFile) {
-        setFormError("bir ses dosyası yükleyin ya da mikrofonla kaydedin");
-        return;
+      if (batchDir.trim()) {
+        // toplu klasör: tek işte tüm dosyalar, tek model yüklemesi
+        params.op = "stt_batch";
+        params.audio_dir = batchDir.trim();
+      } else {
+        if (!audioFile) {
+          setFormError("bir ses dosyası yükleyin, mikrofonla kaydedin ya da klasör yolu girin");
+          return;
+        }
+        params.audio_path = audioFile.path;
       }
-      params.audio_path = audioFile.path;
       if (sttModelPath) {
         params.model_path = sttModelPath;
       } else {
         params.model_size = modelSize;
       }
       if (language.trim()) params.language = language.trim();
+      params.word_timestamps = wordTimestamps;
+    } else if (engine === "bark") {
+      if (!text.trim()) {
+        setFormError("seslendirilecek metni yazın");
+        return;
+      }
+      params.text = text.trim();
+      params.engine = "bark";
+      params.voice_preset = barkPreset;
+      if (barkModelPath) params.model_path = barkModelPath;
     } else {
       if (!text.trim()) {
         setFormError("seslendirilecek metni yazın");
@@ -334,6 +365,23 @@ export default function AudioPanel() {
               </select>
               <span className="muted">çıktı: json + txt + srt + vtt</span>
             </div>
+            <div className="dl-row">
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={wordTimestamps}
+                  onChange={(e) => setWordTimestamps(e.target.checked)}
+                />
+                kelime zaman damgaları
+              </label>
+              <input
+                type="text"
+                style={{ flex: 1, minWidth: 220 }}
+                placeholder="toplu: klasör yolu (Studio makinesinde) — doluysa klasördeki tüm sesler tek işte"
+                value={batchDir}
+                onChange={(e) => setBatchDir(e.target.value)}
+              />
+            </div>
           </>
         )}
 
@@ -360,7 +408,45 @@ export default function AudioPanel() {
               >
                 XTTS-v2 (ses klonlama, çok dilli)
               </button>
+              <button
+                type="button"
+                className={engine === "bark" ? "active" : ""}
+                onClick={() => setEngine("bark")}
+              >
+                Bark (13 dil, ifade işaretleri)
+              </button>
             </div>
+
+            {engine === "bark" && (
+              <>
+                <p className="muted">
+                  Bark (Suno, MIT) hazır konuşmacılarla konuşur; klonlama yapmaz. Metinde{" "}
+                  <code>[laughs]</code>, <code>[sighs]</code>, <code>♪ … ♪</code> gibi işaretler
+                  desteklenir. Uzun metin cümlelere bölünüp birleştirilir.
+                </p>
+                <div className="dl-row">
+                  <select value={barkPreset} onChange={(e) => setBarkPreset(e.target.value)}>
+                    {BARK_PRESETS.map(([v, label]) => (
+                      <option key={v} value={v}>
+                        {label} ({v})
+                      </option>
+                    ))}
+                  </select>
+                  <select value={barkModelPath} onChange={(e) => setBarkModelPath(e.target.value)}>
+                    <option value="">
+                      {barkModels.length === 0
+                        ? "önbellek kullan (Model Browser'da bark yok — suno/bark-small indirin)"
+                        : "önbellek kullan (ilk kullanımda indirir)"}
+                    </option>
+                    {barkModels.map((m) => (
+                      <option key={m.id} value={m.path}>
+                        {m.name} — Model Browser
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
 
             {engine === "kokoro" && (
               <div className="dl-row">

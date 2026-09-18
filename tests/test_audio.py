@@ -27,9 +27,7 @@ def test_worker_python_audio_fallback(client):
 
 
 def test_audio_output_path_tts_is_wav(client):
-    r = client.post(
-        "/v1/jobs", json={"kind": "audio", "params": {"op": "tts", "text": "merhaba"}}
-    )
+    r = client.post("/v1/jobs", json={"kind": "audio", "params": {"op": "tts", "text": "merhaba"}})
     assert r.json()["params"]["output_path"].endswith(".wav")
 
 
@@ -200,3 +198,47 @@ def test_fmt_ts_srt_rounds_and_pads():
     assert _fmt_ts_srt(0) == "00:00:00,000"
     assert _fmt_ts_srt(65.5) == "00:01:05,500"
     assert _fmt_ts_srt(3661.001) == "01:01:01,001"
+
+
+def test_list_audio_files_filters_and_recurses(tmp_path):
+    from studio_inference.adapters.audio import list_audio_files
+
+    (tmp_path / "b.WAV").write_bytes(b"x")
+    (tmp_path / "a.mp3").write_bytes(b"x")
+    (tmp_path / "notes.txt").write_bytes(b"x")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.webm").write_bytes(b"x")
+
+    flat = [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in list_audio_files(str(tmp_path))]
+    assert flat == ["a.mp3", "b.WAV"]
+    deep = list_audio_files(str(tmp_path), recursive=True)
+    assert len(deep) == 3 and any(p.endswith("c.webm") for p in deep)
+
+
+def test_split_sentences_respects_max_chars():
+    from studio_inference.adapters.audio import _split_sentences
+
+    text = "Merhaba dünya. Bu bir test cümlesi! Üçüncü cümle burada? Dördüncü."
+    chunks = _split_sentences(text, max_chars=40)
+    assert all(len(c) <= 40 for c in chunks)
+    assert " ".join(chunks) == text
+    # tek başına çok uzun cümle kelimeden kırılır, boş parça üretmez
+    long = _split_sentences("kelime " * 50, max_chars=30)
+    assert all(0 < len(c) <= 30 for c in long)
+    assert _split_sentences("   ", max_chars=10) == [""]
+
+
+def test_stt_batch_output_is_json_and_requires_dir(client):
+    r = client.post("/v1/jobs", json={"kind": "audio", "params": {"op": "stt_batch"}})
+    assert r.status_code == 200
+    assert r.json()["params"]["output_path"].endswith(".json")
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "audio_dir" in d["error"]
+
+
+def test_tts_bark_engine_is_known(client):
+    r = client.post(
+        "/v1/jobs", json={"kind": "audio", "params": {"op": "tts", "engine": "yok", "text": "a"}}
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "bark" in d["error"]  # bilinen motorlar listesinde artık bark da var

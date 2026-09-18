@@ -530,17 +530,50 @@ def create_server(studio: StudioClient) -> MCPServer:
         model_size: str = "base",
         language: str = "",
         task: str = "transcribe",
+        word_timestamps: bool = True,
         wait: bool = True,
         timeout_s: float = DEFAULT_TIMEOUT,
         ctx: Context = None,  # type: ignore[assignment]
     ) -> dict[str, Any]:
         """Ses dosyasını yazıya çevirir (faster-whisper). language boş = otomatik
-        algıla ("tr" desteklenir). task: transcribe | translate. Çıktı: json+txt+srt+vtt."""
+        algıla ("tr" desteklenir). task: transcribe | translate. word_timestamps ile
+        segments[].words kelime düzeyi zaman damgaları. Çıktı: json+txt+srt+vtt."""
         params: dict[str, Any] = {
             "op": "stt",
             "audio_path": audio_path,
             "model_size": model_size,
             "task": task,
+            "word_timestamps": word_timestamps,
+        }
+        if model_path:
+            params["model_path"] = model_path
+        if language:
+            params["language"] = language
+        return await _submit("audio", params, wait=wait, timeout_s=timeout_s, ctx=ctx)
+
+    @tool(GENERATE)
+    async def transcribe_folder(
+        audio_dir: str,
+        recursive: bool = False,
+        model_path: str = "",
+        model_size: str = "base",
+        language: str = "",
+        task: str = "transcribe",
+        word_timestamps: bool = True,
+        wait: bool = True,
+        timeout_s: float = 3600.0,
+        ctx: Context = None,  # type: ignore[assignment]
+    ) -> dict[str, Any]:
+        """Klasördeki tüm ses/video dosyalarını tek işte, tek model yüklemesiyle yazıya
+        çevirir (toplu transkripsiyon). audio_dir Studio makinesinde bir klasör. Sonuç:
+        özet json + her dosya için json/txt/srt/vtt; bozuk dosya diğerlerini düşürmez."""
+        params: dict[str, Any] = {
+            "op": "stt_batch",
+            "audio_dir": audio_dir,
+            "recursive": recursive,
+            "model_size": model_size,
+            "task": task,
+            "word_timestamps": word_timestamps,
         }
         if model_path:
             params["model_path"] = model_path
@@ -560,19 +593,23 @@ def create_server(studio: StudioClient) -> MCPServer:
         speaker_wav: str = "",
         consent: bool = False,
         speed: float = 1.0,
+        voice_preset: str = "",
         wait: bool = True,
         timeout_s: float = DEFAULT_TIMEOUT,
         ctx: Context = None,  # type: ignore[assignment]
     ) -> dict[str, Any]:
-        """Metni seslendirir (WAV). engine=kokoro (hızlı; voice/lang_code) veya xtts
-        (çok dilli, language="tr" dahil; speaker: hazır ses adı ya da speaker_wav:
-        klonlanacak referans — bu durumda consent=true zorunlu, ses sahibinin izni).
+        """Metni seslendirir (WAV). engine=kokoro (hızlı; voice/lang_code), xtts (çok
+        dilli, language="tr" dahil; speaker: hazır ses adı ya da speaker_wav: klonlanacak
+        referans — bu durumda consent=true zorunlu, ses sahibinin izni) veya bark (Suno,
+        MIT; voice_preset ör. "v2/tr_speaker_3", [laughs]/♪ işaretleri; klonlama yok).
         XTTS-v2 yalnızca ticari olmayan kullanım (CPML)."""
         params: dict[str, Any] = {"op": "tts", "text": text, "engine": engine, "speed": speed}
         if model_path:
             params["model_path"] = model_path
         if engine == "kokoro":
             params.update({"voice": voice, "lang_code": lang_code})
+        elif engine == "bark":
+            params["voice_preset"] = voice_preset or "v2/en_speaker_6"
         else:
             params["language"] = language
             if speaker:
