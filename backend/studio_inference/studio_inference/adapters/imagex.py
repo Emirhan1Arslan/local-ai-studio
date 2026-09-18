@@ -16,9 +16,11 @@ Aileler (model klasöründen otomatik algılanır — `detect_family`):
   `from_pipe` ile aynı ağırlıklardan.
 - hidream_o1: HiDream-ai HiDream-O1-Image / -Dev (8B piksel-native DiT, Qwen3-VL
   omurgası, MIT). Vendor edilmiş çıkarım kodu (vendor/hidream_o1). Dev: 28 adım,
-  guidance 0, flash scheduler; Full: 50 adım, guidance 5, UniPC. Çözünürlük
-  modelin desteklediği en yakın ızgaraya (32 piksel yamalar) oturtulur.
-  Tek referans görselle düzenleme (mode=edit, init_image) desteklenir.
+  guidance 0, flash scheduler; Full: 50 adım, guidance 5, UniPC. Çıktı HER ZAMAN
+  ~4 MP'dir: width/height yalnız en-boy oranını seçer, model kendi çözünürlük
+  setine (2048², 2304×1728, 2560×1440, 3104×1312 …) oturtur — 1024² isteği 2048²
+  üretir (canlı: 28 adım 2048² ≈ 30 sn, tepe VRAM 17.5 GB). Tek referans görselle
+  düzenleme (mode=edit, init_image) desteklenir.
 
 params:
 - model_path: klasör kökü ya da içindeki herhangi bir dosya (Model Browser)

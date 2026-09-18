@@ -60,7 +60,12 @@ const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8))
 const NEW_GEN_FAMILIES = new Set(["zimage", "hidream_o1"]);
 const NEW_GEN_DEFAULTS: Record<string, { steps: number; cfg: number; label: string }> = {
   zimage: { steps: 9, cfg: 0, label: "Z-Image-Turbo — 9 adım, guidance 0 (Apache-2.0)" },
-  hidream_o1: { steps: 28, cfg: 0, label: "HiDream-O1 — Dev 28 adım / guidance 0, Full 50 / 5 (MIT)" },
+  hidream_o1: {
+    steps: 28,
+    cfg: 0,
+    label:
+      "HiDream-O1 — Dev 28 adım / guidance 0, Full 50 / 5 (MIT). Çıktı her zaman ~4 MP: boyut yalnız en-boy oranını seçer (kare → 2048²)",
+  },
 };
 function newGenDefaults(m: ModelInfo | undefined): { steps: number; cfg: number; label: string } | null {
   if (!m || !NEW_GEN_FAMILIES.has(m.family)) return null;

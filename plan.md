@@ -259,6 +259,50 @@ gerçek DB'de 24 satır → 17'ye düştü (LTX-Video 7→1, XTTS-v2 2→1).
 
 **DoD:** Temiz kurulumda kullanıcı Model Browser'dan SDXL indirir ve ilk görselini üretir; 8 GB VRAM'de FLUX-schnell offload ile çalışır; aynı seed + parametre → aynı görsel.
 
+**Durum (2026-09-18) — yeni nesil görsel modeller eklendi (`imagex` iş türü).**
+Kullanıcı "en iyi çalıştırabileceğimiz görsel model"i araştırmamı istedi; Eylül
+2026 itibarıyla açık-ağırlık liderleri (Artificial Analysis arena): Ideogram 4.0
+(NC), FLUX.2 [dev] (NC, 32B+24B TE), Qwen-Image-2512 (Apache, 20B),
+HiDream-O1-Image (MIT, 8B), Z-Image-Turbo (Apache, 6B). RTX 5090 (32 GB) +
+ticari-güvenli lisans kriteriyle **HiDream-O1-Image-Dev + Z-Image-Turbo**
+seçildi, disk yeri açılınca Qwen/FLUX.2/Ideogram eklenecek.
+
+- Bu modeller `diffusers>=0.36` + `transformers>=4.51` (Qwen3/Qwen3-VL
+  kodlayıcı) ister; `envs/image`'ın 0.33/4.46.3 pinleri SDXL/LTX/Wan/Florence-2
+  için dondurulmuş. Çözüm: **ayrı `envs/imagex` venv'i** (sistem torch
+  2.11+cu128 + transformers 4.57.1 + diffusers 0.38 — 0.40 hub>=1.23 isteyip
+  transformers'la çakışıyor) ve yeni iş türü **`imagex`** (`adapters/imagex.py`).
+  Kurulumda accelerate CPU-only torch 2.14'ü venv'e çekti (bilinen tuzak) —
+  söküldü; reçete docs/worker-envs.md.
+- Z-Image: diffusers `ZImagePipeline` (txt2img + img2img `from_pipe`), 9 adım /
+  guidance 0. HiDream-O1: kendi çıkarım kodu (Qwen3-VL tabanlı piksel-DiT,
+  `AutoModelForMultimodalLM` değil vendored `Qwen3VLForConditionalGeneration`)
+  `vendor/hidream_o1/` altına alındı; upstream'in zorunlu flash-attn'i (Windows
+  wheel'i yok, sm_120 desteklemiyor) tek bayrakla SDPA'ya düşürüldü. Çıktı her
+  zaman ~4 MP (width/height yalnız en-boy oranı; kare → 2048²). Dev 28 adım /
+  guidance 0 / flash scheduler; Full 50 / 5 / UniPC. Tek referansla düzenleme
+  (mode=edit).
+- Model Manager: `metadata.group_family()` çok bileşenli klasörlere aile
+  yazıyor (`model_index.json` `_class_name` → zimage/…; HiDream `config.json`
+  qwen3_vl + `final_layer2` ağırlık başlığı → hidream_o1, düz Qwen3-VL LLM'den
+  ayrışır). Tarayıcı, boyutu değişmemiş ama `family`'si boş kayıtları bir kez
+  yeniden çıkarıyor. GeneratePanel model seçimine göre `image|imagex` türüne
+  yolluyor ve aile varsayılanlarını uyguluyor; MCP `generate_image` aynı
+  yönlendirmeyi yapıyor (`steps/cfg=-1` = model varsayılanı).
+- **Canlı doğrulama (HiDream-O1-Dev, RTX 5090):** 2048² doku 28 adımda ~15.7 sn
+  (ilk iş +model yükleme 49 sn), tepe VRAM 17.5 GB; ilerleme + x0 önizleme
+  olayları akıyor. 7 top dokusu MCP → `imagex` worker zinciriyle üretildi —
+  SDXL'in "çok sayıda küçük top" hatasını tekrarlamadı, malzeme makro çekimleri
+  fotogerçekçi; iki renk hatası (su topu, futbol) prompt vurgusuyla giderildi.
+  Z-Image indirmesi yazım anında sürüyor.
+- **İndirme motoru kök neden düzeltmesi:** görevler yalnız bellekte yaşıyordu;
+  API yeniden başlayınca `queued` kayıtlar sonsuza dek bekliyordu.
+  `recover()` yarım kalanları kuyruğa alır (.part Range ile sürer),
+  `restart_pending()` açılışta sahipsiz kuyruğu başlatır.
+- **Kalan:** Z-Image canlı testi; Qwen-Image-2512 / FLUX.2 [dev] / Ideogram 4
+  (disk + HF lisans/token); seamless tiling (circular padding) desteği;
+  HiDream Full varyantı; `imagex` için batch/LoRA yok (upstream'de de yok).
+
 ---
 
 ### FAZ 5 — Görüntü Araç Seti + OCR (4–6 hafta)

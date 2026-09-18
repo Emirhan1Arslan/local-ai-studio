@@ -74,6 +74,9 @@ STUDIO_API_URL=http://<ip>:8710 STUDIO_API_TOKEN=<gizli> studio-mcp   # uzak ist
 - **Faz 10 DoD karşılandı:** tipli graph executor, node cache'i, React Flow editörü, `/v1/workflows`.
 - **Faz 12 MCP tamam:** `/mcp` mount + `studio-mcp` stdio köprüsü, LAN modu token kapısı,
   istemci tarifleri ([docs/mcp.md](docs/mcp.md)). Python SDK sırada.
+- **Yeni nesil görsel modeller (`imagex`):** HiDream-O1-Image (MIT, 8B, ~4 MP) ve
+  Z-Image-Turbo (Apache-2.0, 6B) ayrı `envs/imagex` worker env'inde; Model Manager aileyi
+  klasörden tanır, Üret paneli ve MCP otomatik yönlendirir (`docs/worker-envs.md`).
 
 Ayrıntılı faz durumları ve ertelenen kalanlar için [plan.md](plan.md).
 
