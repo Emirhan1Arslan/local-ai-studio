@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 from studio_core import __version__ as core_version
 from studio_core.assets import register_asset_for_job
@@ -114,10 +115,12 @@ def _mount_mcp(app: FastAPI):
     # DNS-rebinding koruması kapalı: MCP ucu REST ile AYNI token kapısının
     # arkasında ve LAN modunda Host başlığı makine adı/IP olur.
     mcp_app = server.streamable_http_app(
-        streamable_http_path="/",
+        streamable_http_path="/mcp",
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
-    app.mount("/mcp", _BearerGuard(mcp_app), name="mcp")
+    # Mount yerine ASGI-uç Route: Mount("/mcp") tam "/mcp" isteğini 307 ile "/mcp/"ye
+    # yönlendiriyordu; bazı MCP istemcileri POST'ta yönlendirme izlemez.
+    app.router.routes.append(Route("/mcp", endpoint=_BearerGuard(mcp_app)))
     return server
 
 
