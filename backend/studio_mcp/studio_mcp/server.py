@@ -463,13 +463,16 @@ def create_server(studio: StudioClient) -> MCPServer:
         cfg: float = 0.0,
         seed: int = -1,
         vram_mode: str = "max",
+        quantization: str = "none",
         wait: bool = True,
         timeout_s: float = 3600.0,
         ctx: Context = None,  # type: ignore[assignment]
     ) -> dict[str, Any]:
         """Metinden (t2v) ya da görselden (i2v, init_image) video üretir.
         family: ltx (hızlı, vars.) | wan | cogvideox | hunyuan | mochi. 0 verilen
-        boyut/kare/adım alanları ailenin varsayılanına düşer. Dakikalar sürebilir."""
+        boyut/kare/adım alanları ailenin varsayılanına düşer. quantization=fp8 →
+        torchao float8 weight-only (transformer VRAM'i ~yarı; low ile birleşmez).
+        Dakikalar sürebilir."""
         params: dict[str, Any] = {
             "family": family,
             "mode": mode,
@@ -477,6 +480,7 @@ def create_server(studio: StudioClient) -> MCPServer:
             "negative_prompt": negative_prompt,
             "seed": seed,
             "vram_mode": vram_mode,
+            "quantization": quantization,
         }
         if model_path:
             params["model_path"] = model_path
@@ -493,6 +497,38 @@ def create_server(studio: StudioClient) -> MCPServer:
             if val:
                 params[key] = val
         return await _submit("video", params, wait=wait, timeout_s=timeout_s, ctx=ctx)
+
+    @tool(GENERATE)
+    async def interpolate_video(
+        video_path: str,
+        multi: int = 2,
+        model_path: str = "",
+        scale: float = 1.0,
+        wait: bool = True,
+        timeout_s: float = 3600.0,
+        ctx: Context = None,  # type: ignore[assignment]
+    ) -> dict[str, Any]:
+        """Videonun kare hızını RIFE v4.25 ile artırır (multi=2 → 24→48 fps; 2-8).
+        model_path boşsa kurulu RIFE modeli (models/video/RIFE-4.25) seçilir. scale=0.5
+        4K için. Ses izi korunur. Diğer videotool op'ları (trim/concat/speed/add_audio/
+        convert/upscale) için run_job(kind="videotool", params=...)."""
+        if not model_path:
+            rows = await studio.list_models(kind="video")
+            rife = [r for r in rows if "rife" in str(r["name"]).lower()]
+            if not rife:
+                raise RuntimeError(
+                    "RIFE modeli yok: models/video/RIFE-4.25/flownet.safetensors bekleniyor "
+                    "(docs/worker-envs.md 'RIFE')"
+                )
+            model_path = str(rife[0]["path"])
+        params: dict[str, Any] = {
+            "op": "interpolate",
+            "video_path": video_path,
+            "model_path": model_path,
+            "multi": multi,
+            "scale": scale,
+        }
+        return await _submit("videotool", params, wait=wait, timeout_s=timeout_s, ctx=ctx)
 
     @tool(GENERATE)
     async def generate_3d(

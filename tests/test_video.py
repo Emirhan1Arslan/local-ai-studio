@@ -153,6 +153,49 @@ def test_videotool_upscale_requires_model_path(client):
     assert "model_path" in d["error"]
 
 
+def test_videotool_interpolate_requires_model_and_valid_multi(client):
+    r = client.post(
+        "/v1/jobs",
+        json={"kind": "videotool", "params": {"op": "interpolate", "video_path": "a.mp4"}},
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "RIFE" in d["error"] and "model_path" in d["error"]
+
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "videotool",
+            "params": {
+                "op": "interpolate",
+                "video_path": "a.mp4",
+                "model_path": "f.st",
+                "multi": 1,
+            },
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "multi" in d["error"]
+
+
+def test_video_quantization_param_validated(client):
+    r = client.post(
+        "/v1/jobs",
+        json={"kind": "video", "params": {"prompt": "x", "quantization": "int3"}},
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "quantization" in d["error"]
+
+    r = client.post(
+        "/v1/jobs",
+        json={
+            "kind": "video",
+            "params": {"prompt": "x", "quantization": "fp8", "vram_mode": "low"},
+        },
+    )
+    d = _poll_status(client, r.json()["id"], {"failed"}, timeout=30)
+    assert "fp8" in d["error"] and "low" in d["error"]
+
+
 def test_resolve_pipeline_root_walks_up_to_model_index(tmp_path):
     """LTX-Video gibi çok-bileşenli pipeline'larda Model Browser'da hangi
     bileşen (transformer/vae/text_encoder) seçilirse seçilsin aynı köke

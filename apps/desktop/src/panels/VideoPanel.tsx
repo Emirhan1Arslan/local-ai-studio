@@ -15,7 +15,7 @@ import { useStudio } from "../state";
 
 type Mode = "generate" | "edit";
 type GenMode = "t2v" | "i2v";
-type EditOp = "trim" | "concat" | "speed" | "add_audio" | "convert" | "upscale";
+type EditOp = "trim" | "concat" | "speed" | "add_audio" | "convert" | "upscale" | "interpolate";
 type Family = "ltx" | "wan" | "cogvideox" | "hunyuan" | "mochi";
 
 // plan.md Faz 8 adım 1'in kademeli listesi: LTX-Video → Wan 2.x → CogVideoX →
@@ -81,6 +81,10 @@ export default function VideoPanel() {
   const [convertFormat, setConvertFormat] = useState("mp4");
   const [upscaleModels, setUpscaleModels] = useState<ModelInfo[]>([]);
   const [upscaleModelPath, setUpscaleModelPath] = useState("");
+  const [rifeModels, setRifeModels] = useState<ModelInfo[]>([]);
+  const [rifeModelPath, setRifeModelPath] = useState("");
+  const [interpMulti, setInterpMulti] = useState(2);
+  const [quantization, setQuantization] = useState("none");
 
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [results, setResults] = useState<AssetInfo[]>([]);
@@ -112,6 +116,9 @@ export default function VideoPanel() {
     refresh();
     fetchModels("video").then(setVideoModels).catch(() => setVideoModels([]));
     fetchModels("upscale").then(setUpscaleModels).catch(() => setUpscaleModels([]));
+    fetchModels("video")
+      .then((all) => setRifeModels(all.filter((m) => m.name.toLowerCase().includes("rife"))))
+      .catch(() => setRifeModels([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
@@ -232,6 +239,7 @@ export default function VideoPanel() {
       };
       if (modelPath) params.model_path = modelPath;
       if (vram !== "max") params.vram_mode = vram;
+      if (quantization !== "none") params.quantization = quantization;
       if (genMode === "i2v" && initImage) params.init_image = initImage.path;
       try {
         await createJob("video", params);
@@ -277,6 +285,13 @@ export default function VideoPanel() {
           return;
         }
         params.model_path = upscaleModelPath;
+      } else if (editOp === "interpolate") {
+        if (!rifeModelPath) {
+          setFormError("kare interpolasyonu için RIFE modelini seçin (models/video/RIFE-4.25)");
+          return;
+        }
+        params.model_path = rifeModelPath;
+        params.multi = interpMulti;
       }
     }
     try {
@@ -402,6 +417,17 @@ export default function VideoPanel() {
                   <option value="low">düşük VRAM (sequential)</option>
                 </select>
               </label>
+              <label className="gen-num">
+                nicemleme{" "}
+                <select
+                  value={quantization}
+                  onChange={(e) => setQuantization(e.target.value)}
+                  disabled={vram === "low"}
+                >
+                  <option value="none">yok (bf16)</option>
+                  <option value="fp8">fp8 (torchao, ~%35 daha az VRAM)</option>
+                </select>
+              </label>
             </div>
           </>
         )}
@@ -416,6 +442,7 @@ export default function VideoPanel() {
                 <option value="add_audio">ses ekle</option>
                 <option value="convert">format dönüştür</option>
                 <option value="upscale">büyüt</option>
+                <option value="interpolate">kare hızını artır (RIFE)</option>
               </select>
             </div>
 
@@ -604,6 +631,28 @@ export default function VideoPanel() {
                   ))}
                 </select>
                 <span className="muted">her kare ayrı ayrı büyütülür — uzun videolarda yavaş olabilir</span>
+              </div>
+            )}
+
+            {editOp === "interpolate" && (
+              <div className="dl-row">
+                <select value={rifeModelPath} onChange={(e) => setRifeModelPath(e.target.value)}>
+                  <option value="" disabled>
+                    {rifeModels.length === 0 ? "RIFE modeli bulunamadı (models/video/RIFE-4.25)" : "model seç"}
+                  </option>
+                  {rifeModels.map((m) => (
+                    <option key={m.id} value={m.path}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <select value={interpMulti} onChange={(e) => setInterpMulti(Number(e.target.value))}>
+                  <option value={2}>2x kare hızı</option>
+                  <option value={3}>3x</option>
+                  <option value={4}>4x</option>
+                  <option value={8}>8x</option>
+                </select>
+                <span className="muted">Practical-RIFE v4.25 (MIT) — ara kareler akış tahminiyle üretilir, ses korunur</span>
               </div>
             )}
           </>

@@ -26,6 +26,8 @@ params:
 - prompt / negative_prompt (hunyuan hariç tüm ailelerde) · width/height ·
   num_frames · fps (yalnızca encode'a etki eder; ltx'te ayrıca generation'a da
   frame_rate olarak geçer) · steps · cfg · seed · output_path (.mp4)
+- quantization: none (vars.) | fp8 — torchao float8 weight-only (e4m3): transformer
+  ağırlıkları yarıya iner, kalite kaybı ihmal edilebilir; `low` ile birleşmez
 - vram_mode: max (vars.) | balanced (model offload) | low (bileşen bazlı
   device_map='auto' + max_memory ile GPU önce dolar, taşan kısım CPU RAM'e
   gider — tiling de eklenir) — wan/hunyuan/mochi 32 GB'lık bir GPU'da
@@ -255,15 +257,39 @@ def _free_ram_gb() -> float:
         return 4.0  # psutil yoksa ihtiyatlı bir varsayılan
 
 
+def _quantize_fp8(module: Any) -> int:
+    """torchao float8 weight-only (e4m3) nicemleme — plan.md Faz 8 adım 3 kalanı.
+    Ağırlıklar fp8'de tutulur, matmul sırasında bf16'ya açılır: transformer belleği
+    ~%50 düşer, hız yaklaşık aynı (weight-only). Blackwell/sm_120'de torch'un yerleşik
+    float8 dtype'ları kullanılır, özel kernel gerekmez. Nicemlenen Linear sayısını döner."""
+    try:
+        from torchao.quantization import Float8WeightOnlyConfig, quantize_
+    except ImportError as exc:
+        raise RuntimeError(
+            "fp8 için torchao gerekli: envs/image'e `uv pip install torchao` (docs/worker-envs.md)"
+            "  |  " + str(exc)
+        ) from exc
+    import torch
+
+    quantize_(module, Float8WeightOnlyConfig())
+    return sum(1 for m in module.modules() if isinstance(m, torch.nn.Linear))
+
+
 class VideoAdapter:
     def __init__(self) -> None:
         self._pipe = None
         self._family = ""
         self._model_path = ""
         self._vram_mode = "max"
+        self._quantization = "none"
 
     def load(
-        self, model_path: str, family: str = "ltx", vram_mode: str = "max", **kwargs: Any
+        self,
+        model_path: str,
+        family: str = "ltx",
+        vram_mode: str = "max",
+        quantization: str = "none",
+        **kwargs: Any,
     ) -> None:
         spec = _FAMILIES.get(family)
         if spec is None:
@@ -293,6 +319,11 @@ class VideoAdapter:
                 pass
         else:
             pipe = cls.from_pretrained(repo, torch_dtype=dtype)
+            if use_cuda and quantization == "fp8":
+                # Nicemleme GPU'da yapılır (float8 CPU'da desteklenmez); offload
+                # kancaları sonra takılır — nicemlenmiş ağırlıklar taşınırken korunur.
+                pipe.transformer.to("cuda")
+                _quantize_fp8(pipe.transformer)
             if use_cuda:
                 if vram_mode == "balanced":
                     pipe.enable_model_cpu_offload()
@@ -303,6 +334,7 @@ class VideoAdapter:
         self._family = family
         self._model_path = str(model_path)
         self._vram_mode = vram_mode
+        self._quantization = quantization
 
     def infer(self, params: dict) -> Iterator[dict]:
         output_path = params.get("output_path", "")
@@ -320,6 +352,11 @@ class VideoAdapter:
         vram_mode = str(params.get("vram_mode", "max") or "max")
         if vram_mode not in ("max", "balanced", "low"):
             raise RuntimeError(f"bilinmeyen vram_mode: {vram_mode!r} (max|balanced|low)")
+        quantization = str(params.get("quantization", "none") or "none")
+        if quantization not in ("none", "fp8"):
+            raise RuntimeError(f"bilinmeyen quantization: {quantization!r} (none|fp8)")
+        if quantization == "fp8" and vram_mode == "low":
+            raise RuntimeError("fp8 ile vram_mode=low birlikte kullanılamaz (device_map yükleme)")
 
         d = spec["defaults"]
         width = _align(params.get("width", d["width"]))
@@ -334,7 +371,10 @@ class VideoAdapter:
         # Kalıcı worker: model komutlar arasında bellekte kalır; aile/yol/VRAM modu
         # değişirse takas.
         if self._pipe is not None and (
-            self._family != family or self._model_path != model_path or self._vram_mode != vram_mode
+            self._family != family
+            or self._model_path != model_path
+            or self._vram_mode != vram_mode
+            or self._quantization != quantization
         ):
             self.unload()
         if self._pipe is None:
@@ -343,9 +383,11 @@ class VideoAdapter:
                 "event": "progress",
                 "value": 0.0,
                 "message": f"{family} modeli yükleniyor… (ilk kullanımda büyük indirme olabilir, "
-                f"tahmini üretim süresi ~{eta:.0f}sn)",
+                f"tahmini üretim süresi ~{eta:.0f}sn"
+                + (", fp8 nicemleme" if quantization == "fp8" else "")
+                + ")",
             }
-            self.load(model_path, family=family, vram_mode=vram_mode)
+            self.load(model_path, family=family, vram_mode=vram_mode, quantization=quantization)
 
         import torch
 
@@ -460,13 +502,16 @@ class VideoAdapter:
 
     def vram_estimate(self, params: dict) -> int:
         # Kaba tahminler (bf16 transformer + T5/UMT5 metin kodlayıcı) — Faz 14'te profillenecek
-        return {
+        base = {
             "ltx": 14_000,
             "wan": 16_000,
             "cogvideox": 12_000,
             "hunyuan": 28_000,
             "mochi": 24_000,
         }.get(str(params.get("family", "ltx")), 14_000)
+        if params.get("quantization") == "fp8":
+            return int(base * 0.65)  # transformer ağırlıkları yarıya iner; VAE/T5 aynı kalır
+        return base
 
 
 def _latent_preview_jpeg(

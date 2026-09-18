@@ -1290,3 +1290,36 @@ Modeller Model Browser snapshot indirmesiyle `models/checkpoints/<repo-adı>/` a
 gelir (`only_patterns` ile assets/ dışlandı); tarayıcı `group_family()` ile
 Z-Image'ı `model_index.json` `_class_name`'den, HiDream'i `config.json`
 (qwen3_vl) + `final_layer2` ağırlık başlığından tanır.
+
+## Faz 8 kalanları — RIFE kare interpolasyonu (envs/image, ek paket YOK) (2026-09-18)
+
+`rife-ncnn-vulkan-python` yerine Practical-RIFE v4.25'in saf-PyTorch IFNet'i vendor
+edildi (`vendor/rife`, MIT; bkz. NOTICE.md). Ağırlık upstream'de yalnız Google Drive'da
+`flownet.pkl` (pickle) olarak var; safetensors-öncelik politikası için bir kez dönüştürüldü:
+
+```bash
+# resmi v4.25 zip'i (Google Drive id 1ZKjcbmt1hypiFprJPIKW0Tt0lr_2i7bg, ~23 MB)
+curl -L -o rife425.zip "https://drive.google.com/uc?export=download&id=1ZKjcbmt1hypiFprJPIKW0Tt0lr_2i7bg"
+# train_log/flownet.pkl → models/video/RIFE-4.25/flownet.safetensors (+ config.json)
+~/LocalAIStudio/envs/image/Scripts/python.exe -c "import torch; from safetensors.torch import save_file; \
+  sd=torch.load('train_log/flownet.pkl',map_location='cpu',weights_only=True); \
+  save_file({k.replace('module.','',1):v.contiguous() for k,v in sd.items()}, 'flownet.safetensors')"
+```
+
+Model Manager `video/RIFE-4.25` klasörünü listeler (VideoPanel "kare hızını artır", MCP
+`interpolate_video`). Canlı (RTX 5090): 704×480, 121 kare → 2x = 241 kare / 50 fps,
+toplam 14 sn (kare çıkarma + 120 çift + yeniden kodlama), tepe VRAM 448 MB, fp32.
+
+## Faz 8 kalanları — fp8 nicemleme (torchao, envs/image) (2026-09-18)
+
+```bash
+uv pip install --python ~/LocalAIStudio/envs/image/Scripts/python.exe "torchao==0.10.0"
+```
+
+**Pin nedeni:** `torchao 0.18` kurulunca `import diffusers` (0.33.1) `diffusers.loaders.
+single_file` → `name 'logger' is not defined` ile çöküyor — diffusers'ın torchao kancası yeni
+API'yi tanımıyor ve hata yolunda tanımsız logger kullanıyor. 0.10.0 ile import temiz;
+`Float8WeightOnlyConfig` mevcut, torch 2.11'in yerleşik float8 dtype'larıyla çalışıyor
+(sm_120 için özel kernel gerekmiyor). Video adapter'ında `quantization: fp8`
+(`_quantize_fp8`, transformer GPU'ya alınıp `quantize_` uygulanır, sonra offload kancaları).
+`vram_mode=low` (device_map yükleme) ile birleşmez.

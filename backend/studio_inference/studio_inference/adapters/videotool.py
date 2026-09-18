@@ -4,12 +4,17 @@
 DİKKAT: Bu modül worker env'inde (envs/image ile paylaşılır — scheduler._ENV_ALIAS)
 çalışır. 3.11+ sözdizimi KULLANMA.
 
-**RIFE kare interpolasyonu bu dilimde YOK:** `rife-ncnn-vulkan-python` PyPI'da yalnızca
-kaynak dağıtım (.tar.gz) olarak mevcut — Vulkan SDK + C++ derleyici zinciri gerektiriyor,
-bu ortamda güvenle derlenemedi. plan.md'ye not düşüldü (Faz 8 kalanları).
+**RIFE kare interpolasyonu (2026-09-18):** `rife-ncnn-vulkan-python` yerine (PyPI'da yalnız
+kaynak dağıtım, Vulkan SDK + C++ zinciri) Practical-RIFE v4.25'in saf-PyTorch IFNet'i vendor
+edildi (vendor/rife, MIT) — envs/image'ın torch'uyla çalışır, ek bağımlılık yok.
 
 params:
-- op: trim | concat | speed | add_audio | convert | upscale (zorunlu)
+- op: trim | concat | speed | add_audio | convert | upscale | interpolate (zorunlu)
+
+interpolate (kare hızını artır):
+- video_path · model_path (ikisi de zorunlu — models/video/RIFE-4.25/flownet.safetensors)
+- multi: 2-8 (vars. 2; çıkış fps = kaynak fps × multi) · scale: 0.25|0.5|1.0|2.0 (vars. 1.0;
+  4K için 0.5) · ses izi korunur
 
 trim:
 - video_path (zorunlu) · start (sn, vars. 0) · end (sn, opsiyonel — yoksa sona kadar)
@@ -36,6 +41,7 @@ Tüm op'lar: output_path (zorunlu, format ile aynı uzantı)
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Iterator
 from typing import Any
@@ -82,6 +88,51 @@ class VideoToolAdapter:
             model.to("cuda")
         self._cache[key] = model
         return model
+
+    def _get_rife(self, model_path: str):
+        """Practical-RIFE v4.25 IFNet (vendor/rife) — Model Browser'daki
+        `flownet.safetensors` (ya da upstream'in `flownet.pkl`'i) ile. fp32 tutulur:
+        coarse-to-fine akış fp16'ya duyarlı (bkz. vendor/rife/NOTICE.md)."""
+        key = f"rife:{model_path}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        import sys
+
+        vendor = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vendor", "rife"))
+        if vendor not in sys.path:
+            sys.path.insert(0, vendor)
+        try:
+            import torch
+            from rife import IFNet
+        except ImportError as exc:
+            raise _import_error("RIFE (torch) yüklenemedi", exc) from exc
+
+        path = model_path
+        if os.path.isdir(path):
+            for cand in ("flownet.safetensors", "flownet.pkl"):
+                if os.path.isfile(os.path.join(path, cand)):
+                    path = os.path.join(path, cand)
+                    break
+        if path.endswith(".safetensors"):
+            from safetensors.torch import load_file
+
+            state = load_file(path)
+        else:
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            state = {k.replace("module.", "", 1): v for k, v in state.items()}
+        net = IFNet()
+        missing, unexpected = net.load_state_dict(state, strict=False)
+        # upstream `strict=False` yükler: eğitimde kullanılan teacher/caltime blokları
+        # çıkarım ağında yok; ama çıkarım bloklarından biri eksikse bu gerçek hatadır
+        core_missing = [k for k in missing if k.startswith(("block", "encode"))]
+        if core_missing:
+            raise RuntimeError(f"RIFE ağırlıkları eksik: {core_missing[:5]} ({len(core_missing)})")
+        net.eval()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        net.to(device)
+        self._cache[key] = net
+        return net
 
     def infer(self, params: dict) -> Iterator[dict]:
         op = params.get("op", "")
@@ -286,26 +337,169 @@ class VideoToolAdapter:
                 fps_probe = subprocess.run(
                     [
                         ffprobe_exe(),
-                        "-v", "error", "-select_streams", "v:0",
-                        "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", video_path,
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=r_frame_rate",
+                        "-of",
+                        "csv=p=0",
+                        video_path,
                     ],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 fps_str = fps_probe.stdout.strip() or "24/1"
                 encode_args = ["-framerate", fps_str, "-i", f"{out_dir}/%06d.png"]
                 if has_audio_stream(video_path):
                     encode_args += [
-                        "-i", video_path, "-map", "0:v", "-map", "1:a", "-c:a", "copy",
+                        "-i",
+                        video_path,
+                        "-map",
+                        "0:v",
+                        "-map",
+                        "1:a",
+                        "-c:a",
+                        "copy",
                     ]
                 encode_args += [
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart", output_path,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    output_path,
                 ]
                 _run_ffmpeg(encode_args)
 
+        elif op == "interpolate":
+            video_path = str(params.get("video_path", ""))
+            model_path = str(params.get("model_path", ""))
+            if not video_path:
+                raise RuntimeError("video_path gerekli")
+            if not model_path:
+                raise RuntimeError(
+                    "interpolate için model_path gerekli (Model Browser'dan RIFE-4.25 "
+                    "flownet.safetensors seçin)"
+                )
+            multi = int(params.get("multi", 2))
+            if multi < 2 or multi > 8:
+                raise RuntimeError("multi 2-8 arası olmalı (2 = kare hızını ikiye katla)")
+            scale = float(params.get("scale", 1.0))
+            if scale not in (0.25, 0.5, 1.0, 2.0):
+                raise RuntimeError("scale 0.25|0.5|1.0|2.0 olmalı (4K için 0.5)")
+
+            yield {"event": "progress", "value": 0.12, "message": "RIFE modeli yükleniyor…"}
+            net = self._get_rife(model_path)
+
+            import os
+            import tempfile
+
+            import torch
+            import torch.nn.functional as F
+            import torchvision.transforms.functional as TF
+            from PIL import Image
+
+            with tempfile.TemporaryDirectory() as tmp:
+                _run_ffmpeg(["-i", video_path, f"{tmp}/%06d.png"])
+                frame_files = sorted(f for f in os.listdir(tmp) if f.endswith(".png"))
+                if len(frame_files) < 2:
+                    raise RuntimeError("interpolasyon için en az 2 kare gerekir")
+                device = next(net.parameters()).device
+                out_dir = os.path.join(tmp, "out")
+                os.makedirs(out_dir, exist_ok=True)
+
+                def load(fname: str) -> Any:
+                    img = Image.open(os.path.join(tmp, fname)).convert("RGB")
+                    return TF.to_tensor(img).unsqueeze(0).to(device)
+
+                first = load(frame_files[0])
+                h, w = first.shape[2], first.shape[3]
+                # upstream inference_video.py: 128/scale katına doldur (5 kademeli piramit)
+                unit = max(128, int(128 / scale))
+                ph = ((h - 1) // unit + 1) * unit
+                pw = ((w - 1) // unit + 1) * unit
+                pad = (0, pw - w, 0, ph - h)
+                scale_list = [16 / scale, 8 / scale, 4 / scale, 2 / scale, 1 / scale]
+
+                def save(tensor: Any, idx: int) -> None:
+                    TF.to_pil_image(tensor.squeeze(0)[:, :h, :w].clamp(0, 1).cpu()).save(
+                        os.path.join(out_dir, f"{idx:06d}.png")
+                    )
+
+                out_idx = 1
+                prev = F.pad(first, pad)
+                save(prev, out_idx)
+                out_idx += 1
+                total_pairs = len(frame_files) - 1
+                with torch.no_grad():
+                    for i in range(1, len(frame_files)):
+                        nxt = F.pad(load(frame_files[i]), pad)
+                        imgs = torch.cat((prev, nxt), 1)
+                        for k in range(1, multi):
+                            _flow, _mask, merged = net(imgs, k / multi, scale_list)
+                            save(merged[-1], out_idx)
+                            out_idx += 1
+                        save(nxt, out_idx)
+                        out_idx += 1
+                        prev = nxt
+                        yield {
+                            "event": "progress",
+                            "value": 0.15 + 0.75 * i / total_pairs,
+                            "message": f"kare çifti {i}/{total_pairs} → {multi}x",
+                        }
+
+                yield {"event": "progress", "value": 0.95, "message": "yeniden kodlanıyor…"}
+                fps_probe = subprocess.run(
+                    [
+                        ffprobe_exe(),
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=r_frame_rate",
+                        "-of",
+                        "csv=p=0",
+                        video_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                num, _, den = (fps_probe.stdout.strip() or "24/1").partition("/")
+                src_fps = float(num) / float(den or 1)
+                out_fps = src_fps * multi
+                encode_args = ["-framerate", f"{out_fps:.4f}", "-i", f"{out_dir}/%06d.png"]
+                if has_audio_stream(video_path):
+                    encode_args += ["-i", video_path, "-map", "0:v", "-map", "1:a", "-c:a", "copy"]
+                encode_args += [
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    output_path,
+                ]
+                _run_ffmpeg(encode_args)
+            yield {
+                "event": "done",
+                "result": {
+                    "path": output_path,
+                    "op": op,
+                    "multi": multi,
+                    "src_fps": src_fps,
+                    "fps": out_fps,
+                    "frames": out_idx - 1,
+                },
+            }
+            return
+
         else:
             raise RuntimeError(
-                f"bilinmeyen op: {op!r} (trim|concat|speed|add_audio|convert|upscale)"
+                f"bilinmeyen op: {op!r} (trim|concat|speed|add_audio|convert|upscale|interpolate)"
             )
 
         yield {"event": "done", "result": {"path": output_path, "op": op}}
@@ -321,5 +515,6 @@ class VideoToolAdapter:
             pass
 
     def vram_estimate(self, params: dict) -> int:
-        # upscale (spandrel/ESRGAN) hariç yalnızca CPU/FFmpeg subprocess kullanır
-        return 2000 if params.get("op") == "upscale" else 0
+        # upscale (spandrel/ESRGAN) ve interpolate (RIFE, fp32 IFNet) hariç yalnızca
+        # CPU/FFmpeg subprocess kullanır
+        return {"upscale": 2000, "interpolate": 3000}.get(str(params.get("op", "")), 0)
