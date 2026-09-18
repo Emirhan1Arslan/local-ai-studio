@@ -131,6 +131,21 @@ def create_server(studio: StudioClient) -> MCPServer:
             )
         return str(models[0]["path"])
 
+    NEW_GEN_FAMILIES = {"zimage", "hidream_o1"}
+
+    async def _image_kind_for(model_path: str) -> tuple[str, dict[str, Any] | None]:
+        """Seçilen checkpoint'in Model Manager kaydına göre iş türü: yeni nesil aileler
+        (Z-Image, HiDream-O1) ayrı env'de 'imagex', gerisi SDXL/SD3/FLUX 'image'."""
+        norm = model_path.replace("\\", "/").rstrip("/").lower()
+        for row in await studio.list_models(kind="checkpoint"):
+            row_path = str(row["path"]).replace("\\", "/").lower()
+            root = (
+                row_path.rsplit("/", 1)[0] if "components" in (row.get("meta") or {}) else row_path
+            )
+            if norm == row_path or norm.startswith(root) or root.startswith(norm):
+                return ("imagex" if row.get("family") in NEW_GEN_FAMILIES else "image"), row
+        return "image", None
+
     # -- sistem / modeller --------------------------------------------------------
     @tool(READ_ONLY)
     async def system_info() -> dict[str, Any]:
@@ -239,8 +254,8 @@ def create_server(studio: StudioClient) -> MCPServer:
         negative_prompt: str = "",
         width: int = 1024,
         height: int = 1024,
-        steps: int = 30,
-        cfg: float = 7.0,
+        steps: int = -1,
+        cfg: float = -1.0,
         seed: int = -1,
         model_family: str = "",
         sampler: str = "",
@@ -251,29 +266,39 @@ def create_server(studio: StudioClient) -> MCPServer:
         timeout_s: float = DEFAULT_TIMEOUT,
         ctx: Context = None,  # type: ignore[assignment]
     ) -> Any:
-        """Metinden görsel üretir (SDXL / SD3 / FLUX — aile dosyadan otomatik algılanır).
-        model_path boşsa kurulu ilk checkpoint kullanılır. seed=-1 rastgele; aynı seed +
-        parametre aynı görseli verir. include_image=true ise PNG'yi de içerik olarak döner
-        (büyük görsellerde yavaş). Çıktı: output_path (Studio makinesinde) + output_url."""
+        """Metinden görsel üretir. Aileler: SDXL / SD3 / FLUX (dosyadan algılanır) ve yeni
+        nesil Z-Image-Turbo / HiDream-O1 (Model Manager kaydından; ayrı env). model_path
+        boşsa kurulu ilk checkpoint kullanılır — list_models(kind="checkpoint") ile seç.
+        steps/cfg -1 = modelin varsayılanı (SDXL 30/7; Z-Image 9/0; HiDream Dev 28/0).
+        sampler/loras yalnız SDXL ailesinde. seed=-1 rastgele. include_image=true ise PNG'yi
+        içerik olarak da döner. Çıktı: output_path (Studio makinesinde) + output_url."""
+        chosen = model_path or await _pick_model("checkpoint", "görsel üretim")
+        kind, _row = await _image_kind_for(chosen)
         params: dict[str, Any] = {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "width": width,
             "height": height,
-            "steps": steps,
-            "cfg": cfg,
             "seed": seed,
             "mode": "txt2img",
-            "vram_mode": vram_mode,
-            "model_path": model_path or await _pick_model("checkpoint", "görsel üretim"),
+            "model_path": chosen,
         }
-        if model_family:
-            params["model_family"] = model_family
-        if sampler:
-            params["sampler"] = sampler
-        if loras:
-            params["loras"] = loras
-        summary = await _submit("image", params, wait=wait, timeout_s=timeout_s, ctx=ctx)
+        if kind == "image":
+            params["steps"] = steps if steps > 0 else 30
+            params["cfg"] = cfg if cfg >= 0 else 7.0
+            params["vram_mode"] = vram_mode
+            if model_family:
+                params["model_family"] = model_family
+            if sampler:
+                params["sampler"] = sampler
+            if loras:
+                params["loras"] = loras
+        else:
+            # imagex adapter'ı -1'i "aile varsayılanı" olarak okur
+            params["steps"] = steps
+            params["cfg"] = cfg
+            params["vram_mode"] = "balanced" if vram_mode != "max" else "max"
+        summary = await _submit(kind, params, wait=wait, timeout_s=timeout_s, ctx=ctx)
         if include_image and summary.get("output_path"):
             png = await studio.fetch_output(summary["output_path"])
             return [json.dumps(summary, ensure_ascii=False), Image(data=png, format="png")]

@@ -55,6 +55,20 @@ function assetUrl(a: AssetInfo): string {
 
 const snap = (v: number) => Math.min(2048, Math.max(512, Math.round(v / 8) * 8));
 
+// Yeni nesil aileler ayrı worker env'inde (envs/imagex) çalışır — iş türü "imagex".
+// Model Manager `family` alanını klasörden çıkarır (studio_models/metadata.py::group_family).
+const NEW_GEN_FAMILIES = new Set(["zimage", "hidream_o1"]);
+const NEW_GEN_DEFAULTS: Record<string, { steps: number; cfg: number; label: string }> = {
+  zimage: { steps: 9, cfg: 0, label: "Z-Image-Turbo — 9 adım, guidance 0 (Apache-2.0)" },
+  hidream_o1: { steps: 28, cfg: 0, label: "HiDream-O1 — Dev 28 adım / guidance 0, Full 50 / 5 (MIT)" },
+};
+function newGenDefaults(m: ModelInfo | undefined): { steps: number; cfg: number; label: string } | null {
+  if (!m || !NEW_GEN_FAMILIES.has(m.family)) return null;
+  const d = NEW_GEN_DEFAULTS[m.family];
+  if (m.family === "hidream_o1" && !m.name.toLowerCase().includes("dev")) return { ...d, steps: 50, cfg: 5 };
+  return d;
+}
+
 function MaskEditor({
   src,
   canvasRef,
@@ -171,7 +185,9 @@ export default function GeneratePanel() {
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const refreshJobs = () => {
-    fetchJobs().then((all) => setImageJobs(all.filter((j) => j.kind === "image"))).catch(() => undefined);
+    fetchJobs()
+      .then((all) => setImageJobs(all.filter((j) => j.kind === "image" || j.kind === "imagex")))
+      .catch(() => undefined);
     fetchAssets("image").then(setAssets).catch(() => undefined);
   };
 
@@ -191,6 +207,22 @@ export default function GeneratePanel() {
     refreshJobs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
+
+  const selectedModel = models.find((m) => m.path === modelPath);
+  const newGen = newGenDefaults(selectedModel);
+
+  // Aile değişince adım/guidance varsayılanlarını modele uydur (SDXL'e dönüşte 30/7).
+  useEffect(() => {
+    const d = newGenDefaults(models.find((m) => m.path === modelPath));
+    if (d) {
+      setSteps(d.steps);
+      setCfg(d.cfg);
+    } else if (NEW_GEN_FAMILIES.size) {
+      setSteps((s) => (s === 9 || s === 28 || s === 50 ? 30 : s));
+      setCfg((c) => (c === 0 || c === 5 ? 7 : c));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelPath]);
 
   useEffect(() => {
     let needsRefresh = false;
@@ -272,14 +304,26 @@ export default function GeneratePanel() {
         loras: loras.map((l) => ({ path: l.path, weight: l.weight })),
       }),
     };
-    if (sampler) params.sampler = sampler;
-    if (vram !== "max") params.vram_mode = vram;
+    const kind = newGen ? "imagex" : "image";
+    if (newGen) {
+      // imagex aileleri: sampler/LoRA/ControlNet/IP-Adapter SDXL'e özgü; inpaint/outpaint yok.
+      delete params.loras;
+      if (mode === "inpaint" || mode === "outpaint") {
+        setFormError("bu model ailesi yalnız txt2img ve img2img/edit destekliyor");
+        return;
+      }
+      if (vram !== "max") params.vram_mode = "balanced";
+    } else {
+      if (sampler) params.sampler = sampler;
+      if (vram !== "max") params.vram_mode = vram;
+    }
     if (mode !== "txt2img") {
       if (!init) {
         setFormError("kaynak görsel seçin (dosya yükleyin ya da galeriden 'kaynak al')");
         return;
       }
-      params.mode = mode;
+      // HiDream-O1 img2img yerine referans görselli düzenleme ("edit") yapar.
+      params.mode = newGen && selectedModel?.family === "hidream_o1" && mode === "img2img" ? "edit" : mode;
       params.init_image = init.path;
       params.strength = strength;
       if (init.assetId) params.parent_asset_id = init.assetId;
@@ -297,16 +341,16 @@ export default function GeneratePanel() {
       }
       if (mode === "outpaint") params.outpaint = { ...op };
       const cnEffective = cnPick === "__custom" ? cnModel.trim() : cnPick;
-      if (mode === "txt2img" && cnEffective && cnImage) {
+      if (!newGen && mode === "txt2img" && cnEffective && cnImage) {
         params.controlnets = [
           { model: cnEffective, image: cnImage.path, scale: cnScale, preprocess: cnPrep },
         ];
       }
-      if (mode === "txt2img" && ipImage) {
+      if (!newGen && mode === "txt2img" && ipImage) {
         params.ip_adapter = { image: ipImage.path, scale: ipScale };
       }
-      if (batch > 1) await createJobBatch("image", params, batch);
-      else await createJob("image", params);
+      if (batch > 1) await createJobBatch(kind, params, batch);
+      else await createJob(kind, params);
       refreshJobs();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -339,9 +383,16 @@ export default function GeneratePanel() {
           {models.map((m) => (
             <option key={m.id} value={m.path}>
               {m.name}
+              {NEW_GEN_FAMILIES.has(m.family) ? " · yeni nesil" : ""}
             </option>
           ))}
         </select>
+        {newGen && (
+          <p className="muted" style={{ margin: 0 }}>
+            {newGen.label}. Ayrı worker env'inde (envs/imagex) çalışır; sampler/LoRA/ControlNet/
+            IP-Adapter ve inpaint/outpaint bu ailede yok, negative prompt yalnız guidance &gt; 1 iken etkili.
+          </p>
+        )}
         <textarea
           placeholder="prompt"
           value={prompt}

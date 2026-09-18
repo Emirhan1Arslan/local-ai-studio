@@ -195,6 +195,49 @@ def group_key(path: Path, models_root: Path) -> str:
     return str(path)
 
 
+def group_family(root: Path) -> tuple[str, str]:
+    """Çok bileşenli bir model kökü için (aile, pipeline sınıfı) çifti.
+
+    - diffusers klasörü: model_index.json `_class_name` → "ZImagePipeline" → "zimage",
+      "StableDiffusionXLPipeline" → "stablediffusionxl", "LTXPipeline" → "ltx" …
+    - transformers-tarzı klasör (config.json): `model_type`; HiDream-O1'in Qwen3-VL
+      omurgası düz bir Qwen3-VL LLM'den `final_layer2` görüntü başıyla ayrılır →
+      "hidream_o1". UI/MCP bu aileye göre işi `image` ya da `imagex` türüne yollar.
+    """
+    idx = root / "model_index.json"
+    if idx.is_file():
+        try:
+            cname = str(json.loads(idx.read_text(encoding="utf-8")).get("_class_name", ""))
+        except (OSError, ValueError):
+            return "", ""
+        fam = cname
+        for suffix in ("Pipeline", "Img2Img", "Inpaint", "ControlNet"):
+            fam = fam.replace(suffix, "")
+        return fam.lower(), cname
+    cfg = root / "config.json"
+    if cfg.is_file():
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "", ""
+        model_type = str(data.get("model_type", "") or "")
+        if model_type == "qwen3_vl" and _has_hidream_head(root):
+            return "hidream_o1", "HiDreamO1Image"
+        return model_type, str((data.get("architectures") or [""])[0])
+    return "", ""
+
+
+def _has_hidream_head(root: Path) -> bool:
+    if "hidream" in root.name.lower():
+        return True
+    index = root / "model.safetensors.index.json"
+    try:
+        weight_map = json.loads(index.read_text(encoding="utf-8")).get("weight_map", {})
+    except (OSError, ValueError):
+        return False
+    return any("final_layer2" in k for k in weight_map)
+
+
 def extract_group(key: str, paths: list[Path], models_root: Path) -> dict[str, Any]:
     """Bir mantıksal model için (tek dosya ya da group_key ile gruplanmış çok
     bileşenli/parçalı bir ağırlık kümesi) tek bir ModelRecord alan seti üretir.
@@ -219,6 +262,10 @@ def extract_group(key: str, paths: list[Path], models_root: Path) -> dict[str, A
         meta = {"components": [p.name for p in paths]}
 
     root_path = Path(key)
+    if root_path.is_dir():
+        family, pipeline_class = group_family(root_path)
+        if pipeline_class:
+            meta["pipeline_class"] = pipeline_class
     name = root_path.name if root_path.is_dir() else representative.stem
 
     return {

@@ -87,7 +87,7 @@ _IMGTOOL_IMAGE_OPS = {"bg_remove", "upscale", "segment", "crop", "adjust", "face
 
 def _create_job_row(kind: str, params: dict, req: JobRequest) -> str:
     # Görüntü işleri çıktıyı outputs/ altına yazar (proje sistemi bunu asset'e bağlar)
-    if kind == "image" and not params.get("output_path"):
+    if kind in ("image", "imagex") and not params.get("output_path"):
         settings = get_settings()
         settings.ensure_dirs()
         params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")

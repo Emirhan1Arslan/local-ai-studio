@@ -1253,3 +1253,40 @@ aynı süreçte eklendi) — TEK istisna Hunyuan3D-2'nin texgen/paint aşaması
 bağımsız bir engel, bkz. yukarıdaki not). Bu sürecin en büyük tek katkısı
 NVIDIA CUDA Toolkit kurulumuydu — InstantMesh/TRELLIS/CRM'in üçü de bundan
 önce kapsam dışıydı.
+
+## imagex env (envs/imagex, AYRI venv — yeni nesil görsel modeller, 2026-09-18)
+
+Z-Image-Turbo (Tongyi-MAI, 6B, Apache-2.0) ve HiDream-O1-Image / -Dev (8B, MIT)
+`diffusers>=0.36` + `transformers>=4.51` (Qwen3 / Qwen3-VL kodlayıcılar) ister.
+`envs/image`'ın `diffusers 0.33.1 + transformers 4.46.3` pinleri SDXL/LTX/Wan/
+Florence-2 için dondurulmuş — o venv'i yükseltmek yerine ayrı bir venv kuruldu,
+iş türü `imagex` (`adapters/imagex.py`), UI/MCP Model Manager `family`
+alanına göre (`zimage` / `hidream_o1`) işi bu türe yollar.
+
+```bash
+uv venv ~/LocalAIStudio/envs/imagex \
+  --python "C:\Users\Tars\AppData\Local\Programs\Python\Python310\python.exe" \
+  --system-site-packages
+uv pip install --python ~/LocalAIStudio/envs/imagex/Scripts/python.exe \
+  "diffusers>=0.36,<0.39" "transformers==4.57.1" "huggingface-hub<1.0" \
+  accelerate einops scipy sentencepiece
+# accelerate çözümü CPU-only torch 2.14'ü venv'e ÇEKTİ (bilinen tuzak, bkz. 3d env) —
+# sökülür, sistem torch 2.11+cu128 tekrar görünür olur:
+uv pip uninstall --python ~/LocalAIStudio/envs/imagex/Scripts/python.exe torch torchvision
+```
+
+Doğrulanan kombinasyon: `torch 2.11.0+cu128 (sistem) + transformers 4.57.1 +
+diffusers 0.38.0 + huggingface-hub 0.36.2`. Neden 0.38 ve 4.57.1:
+- `diffusers 0.40` → `huggingface-hub>=1.23`; `transformers 4.57.1` → `hub<1.0` →
+  çözümsüz. 0.38 son `hub<1.0` uyumlu sürüm ve `ZImagePipeline`/`ZImageImg2Img`
+  içeriyor (0.36'da geldi).
+- `transformers==4.57.1` HiDream-O1'in kendi `requirements.txt` pini
+  (`Qwen3VLConfig`, `check_model_inputs`, `create_causal_mask` importları).
+- `flash-attn` yok (Windows wheel'i yok, sm_120 desteklemiyor) — vendor edilen
+  `hidream_o1/pipeline.py` flash-attn yoksa modelin SDPA yoluna düşer
+  (vendor/hidream_o1/NOTICE.md).
+
+Modeller Model Browser snapshot indirmesiyle `models/checkpoints/<repo-adı>/` altına
+gelir (`only_patterns` ile assets/ dışlandı); tarayıcı `group_family()` ile
+Z-Image'ı `model_index.json` `_class_name`'den, HiDream'i `config.json`
+(qwen3_vl) + `final_layer2` ağırlık başlığından tanır.

@@ -13,6 +13,8 @@ from studio_inference.adapters.base import EngineAdapter
 _REGISTRY: dict[str, str] = {
     "dummy": "studio_inference.adapters.dummy:DummyAdapter",
     "image": "studio_inference.adapters.sdxl:SdxlAdapter",
+    # Yeni nesil görsel modeller (Z-Image, HiDream-O1) — ayrı env (envs/imagex), bkz. imagex.py
+    "imagex": "studio_inference.adapters.imagex:ImageXAdapter",
     "imgtool": "studio_inference.adapters.imgtool:ImgToolAdapter",
     "llm": "studio_inference.adapters.llm:LlamaAdapter",
     "audio": "studio_inference.adapters.audio:AudioAdapter",

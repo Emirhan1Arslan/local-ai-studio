@@ -27,7 +27,7 @@ from .nodes import JobDispatch
 # studio_api/routes/jobs.py::_create_job_row ile aynı sözleşme. Yeni job `kind`
 # dispatch eden node türleri eklendikçe bu tablo genişletilecek.
 _IMGTOOL_IMAGE_OPS = {"bg_remove", "upscale", "segment", "crop", "adjust", "face_restore"}
-_EXT_BY_KIND = {"image": "png"}
+_EXT_BY_KIND = {"image": "png", "imagex": "png"}
 
 
 class JobDispatchError(Exception):
