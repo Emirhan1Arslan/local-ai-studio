@@ -15,6 +15,8 @@ params:
 - sampler: euler | euler_a | dpmpp_2m | dpmpp_2m_karras | dpmpp_sde_karras |
            unipc | ddim | heun | lms (yalnız SDXL; boşsa modelin varsayılanı)
 - vram_mode: max (vars.) | balanced (model offload) | low (sequential+slicing+tiling)
+- tile: true → kenar-eşleşmeli (seamless) doku: UNet + VAE Conv2d'leri circular padding
+  ile çalışır (A1111 "Tiling"); oyun dokuları için. Yalnız txt2img/img2img'de anlamlı.
 - preview: canlı latent önizlemesi (vars. true; yalnız SDXL, VAE decode'suz ucuz yaklaşım)
 - controlnets: [{"model": yol|repo, "image": yol, "scale", "preprocess": none|canny}]
 - ip_adapter: {"image": yol, "scale", "repo", "subfolder", "weight_name"}
@@ -31,6 +33,8 @@ import struct
 import threading
 from collections.abc import Iterator
 from typing import Any
+
+from studio_inference.adapters._tiling import set_circular_padding
 
 _SAMPLERS = {
     "euler": ("EulerDiscreteScheduler", {}),
@@ -419,6 +423,12 @@ class SdxlAdapter:
         else:
             work = self._pipe
 
+        # -- kenar-eşleşmeli doku: iş başına aç/kapa (bileşenler from_pipe ile paylaşılır)
+        tile = bool(params.get("tile", False))
+        set_circular_padding(getattr(self._pipe, "unet", None), tile)
+        set_circular_padding(getattr(self._pipe, "transformer", None), tile)
+        set_circular_padding(getattr(self._pipe, "vae", None), tile)
+
         # -- sampler (yalnız SDXL; SD3/FLUX flow-match scheduler'ını korur) ---
         sampler = str(params.get("sampler", "") or "")
         if family == "sdxl" and self._default_scheduler is not None:
@@ -533,6 +543,7 @@ class SdxlAdapter:
                     "width": image.width,
                     "height": image.height,
                     "mode": mode,
+                    "tile": "circular" if tile else None,
                 }
             except Exception as exc:  # thread sınırı: hata ana akışa taşınır
                 outcome["error"] = str(exc)

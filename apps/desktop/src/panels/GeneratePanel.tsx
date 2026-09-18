@@ -167,6 +167,7 @@ export default function GeneratePanel() {
   const [seed, setSeed] = useState(-1);
   const [sampler, setSampler] = useState("");
   const [vram, setVram] = useState("max");
+  const [tile, setTile] = useState(false);
   const [mode, setMode] = useState<Mode>("txt2img");
   const [init, setInit] = useState<InitPick | null>(null);
   const [strength, setStrength] = useState(0.75);
@@ -310,6 +311,7 @@ export default function GeneratePanel() {
       }),
     };
     const kind = newGen ? "imagex" : "image";
+    if (tile) params.tile = true;
     if (newGen) {
       // imagex aileleri: sampler/LoRA/ControlNet/IP-Adapter SDXL'e özgü; inpaint/outpaint yok.
       delete params.loras;
@@ -557,6 +559,15 @@ export default function GeneratePanel() {
               </select>
             </label>
             {vram !== "max" && <span className="muted">offload modunda yalnız metin→görsel çalışır</span>}
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={tile} onChange={(e) => setTile(e.target.checked)} />
+              kenar-eşleşmeli doku (tile)
+            </label>
+            {tile && (
+              <span className="muted">
+                {newGen ? "DiT ailesi: offset+blend son işlemi (yumuşak geçiş bandı)" : "UNet+VAE circular padding (gerçek döngüsel üretim)"}
+              </span>
+            )}
           </div>
           {mode === "txt2img" && (
             <>

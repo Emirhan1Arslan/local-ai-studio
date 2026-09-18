@@ -261,6 +261,7 @@ def create_server(studio: StudioClient) -> MCPServer:
         sampler: str = "",
         vram_mode: str = "max",
         loras: list[dict] | None = None,
+        tile: bool = False,
         include_image: bool = False,
         wait: bool = True,
         timeout_s: float = DEFAULT_TIMEOUT,
@@ -270,8 +271,10 @@ def create_server(studio: StudioClient) -> MCPServer:
         nesil Z-Image-Turbo / HiDream-O1 (Model Manager kaydından; ayrı env). model_path
         boşsa kurulu ilk checkpoint kullanılır — list_models(kind="checkpoint") ile seç.
         steps/cfg -1 = modelin varsayılanı (SDXL 30/7; Z-Image 9/0; HiDream Dev 28/0).
-        sampler/loras yalnız SDXL ailesinde. seed=-1 rastgele. include_image=true ise PNG'yi
-        içerik olarak da döner. Çıktı: output_path (Studio makinesinde) + output_url."""
+        sampler/loras yalnız SDXL ailesinde. tile=true → kenar-eşleşmeli (seamless) oyun
+        dokusu (SDXL: circular padding; DiT aileleri: offset+blend son işlemi). seed=-1
+        rastgele. include_image=true ise PNG'yi içerik olarak da döner. Çıktı: output_path
+        (Studio makinesinde) + output_url."""
         chosen = model_path or await _pick_model("checkpoint", "görsel üretim")
         kind, _row = await _image_kind_for(chosen)
         params: dict[str, Any] = {
@@ -282,6 +285,7 @@ def create_server(studio: StudioClient) -> MCPServer:
             "seed": seed,
             "mode": "txt2img",
             "model_path": chosen,
+            "tile": tile,
         }
         if kind == "image":
             params["steps"] = steps if steps > 0 else 30

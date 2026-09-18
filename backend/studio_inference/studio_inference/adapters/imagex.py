@@ -30,6 +30,9 @@ params:
 - steps · cfg (boş/-1 → ailenin varsayılanı) · seed (-1 rastgele)
 - init_image · strength (img2img, vars. 0.6)
 - vram_mode: max (vars.) | balanced (model CPU offload)
+- tile: true → kenar-eşleşmeli doku. DiT ailelerinde circular padding anlamsız olduğu
+  için model-bağımsız wrap-blend son işlemi uygulanır (adapters/_tiling.py);
+  tile_band (vars. 0.12) karıştırma bandının kenar oranı.
 - preview: canlı önizleme (vars. true; hidream_o1 x0 tahmini, zimage yok)
 - output_path (zorunlu)
 """
@@ -308,6 +311,18 @@ class ImageXAdapter:
         from PIL.PngImagePlugin import PngInfo
 
         image = outcome["image"]
+        tile_mode = None
+        if bool(params.get("tile", False)):
+            # DiT tabanlı ailelerde evrişimsel döngüsellik yok → model-bağımsız wrap-blend
+            from studio_inference.adapters._tiling import make_tileable
+
+            yield {
+                "event": "progress",
+                "value": 0.99,
+                "message": "kenar-eşleşmeli hale getiriliyor…",
+            }
+            image = make_tileable(image, float(params.get("tile_band", 0.12)))
+            tile_mode = "wrap_blend"
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
         meta = PngInfo()
         meta.add_text(
@@ -326,6 +341,7 @@ class ImageXAdapter:
                 "family": family,
                 "steps": steps,
                 "cfg": cfg,
+                "tile": tile_mode,
             },
         }
 
