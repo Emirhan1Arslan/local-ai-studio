@@ -145,7 +145,7 @@ _STEPS_PER_SEC = {"ltx": 13.0, "wan": 5.0, "cogvideox": 4.5, "hunyuan": 0.5, "mo
 
 
 def estimate_seconds(family: str, steps: int) -> float:
-    rate = _STEPS_PER_SEC.get(family, 2.0)
+    rate = _STEPS_PER_SEC.get(family, _STEPS_PER_SEC["wan"])
     return round(steps / rate, 1)
 
 

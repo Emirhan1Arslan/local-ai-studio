@@ -50,16 +50,32 @@ pnpm --filter desktop dev    # http://localhost:5173
 uv run pytest
 ```
 
+## MCP ile kullanım / uzaktan erişim
+
+Studio çalışırken `http://127.0.0.1:8710/mcp` (streamable HTTP) ve `uv run studio-mcp`
+(stdio köprüsü) aynı araç setini sunar: `generate_image`, `generate_video`, `generate_3d`,
+`chat`, `transcribe_audio`, `synthesize_voice`, görüntü araçları, model indirme, workflow
+çalıştırma. Claude Desktop / Claude Code / Cursor / VS Code / Windsurf tarifleri ve **LAN
+üzerinden uzak makineden kullanım** için [docs/mcp.md](docs/mcp.md).
+
+```bash
+uv run studio-api --host 0.0.0.0 --token <gizli>   # LAN modu (token zorunlu, uyarı basar)
+STUDIO_API_URL=http://<ip>:8710 STUDIO_API_TOKEN=<gizli> studio-mcp   # uzak istemcide köprü
+```
+
 ## Durum
 
-- **Faz 0 tamam:** monorepo, 15 ADR, CI iskeleti, lisans/OSS hijyeni.
-- **Faz 1 çekirdeği tamam:** FastAPI `/v1` + WS olay veriyolu + SQLite/Alembic + donanım
-  algılama + dockview'lu React UI; Tauri kabuk iskeleti (sidecar spawn + token el sıkışması).
-- **Faz 2 çekirdeği tamam:** model dizini tarayıcı (safetensors/GGUF metadata), registry,
-  watchdog ile restart'sız canlı algılama, `/v1/models` + Model Browser paneli.
-- Sırada: indirme motoru (HF/CivitAI), Faz 3 Job/Scheduler/Worker mimarisi.
+- **Faz 0–5 tamam:** monorepo/ADR'ler, FastAPI `/v1` + WS, Model Manager + indirme motoru,
+  Job/Scheduler/crash-izole worker'lar, SDXL/SD3/FLUX görsel üretimi (img2img/inpaint/outpaint,
+  ControlNet, IP-Adapter, LoRA), görüntü araç seti (BiRefNet, ESRGAN, Florence-2, SAM, OCR).
+- **Faz 6–9 çekirdeği tamam:** llama.cpp sohbet (RAG/Ollama köprüsü ertelendi), STT/TTS
+  (faster-whisper, Kokoro, XTTS-v2), video (LTX/Wan/CogVideoX/Hunyuan/Mochi + FFmpeg araçları),
+  3D (yedi aile, viewer, GLB/OBJ/STL/PLY/FBX export).
+- **Faz 10 DoD karşılandı:** tipli graph executor, node cache'i, React Flow editörü, `/v1/workflows`.
+- **Faz 12 MCP tamam:** `/mcp` mount + `studio-mcp` stdio köprüsü, LAN modu token kapısı,
+  istemci tarifleri ([docs/mcp.md](docs/mcp.md)). Python SDK sırada.
 
-Yol haritası ve kilometre taşları için [plan.md](plan.md).
+Ayrıntılı faz durumları ve ertelenen kalanlar için [plan.md](plan.md).
 
 ## Lisans
 

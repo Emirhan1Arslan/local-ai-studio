@@ -47,6 +47,10 @@ MCP, dış istemciler için sonradan eklenmiş bir API değil, **birincil entegr
 REST `/v1`, WS olayları ve MCP araçları aynı application-service katmanını çağırır (tek yüzey,
 çift iş yok — ADR-0003).
 
+Uygulama (Faz 12): `studio_mcp` araçları REST `/v1`'i çağırır; aynı sunucu (a) API sürecine
+`/mcp` olarak mount edilir (streamable HTTP, aynı Bearer token kapısı), (b) `studio-mcp` stdio
+köprüsü olarak istemci tarafında — gerekirse uzak bir makinede — çalışır. Bkz. docs/mcp.md.
+
 ## Süreç Modeli
 
 ```

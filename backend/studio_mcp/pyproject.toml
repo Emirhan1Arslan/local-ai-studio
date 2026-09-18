@@ -1,12 +1,14 @@
 [project]
 name = "studio-mcp"
 version = "0.1.0"
-description = "Local AI Studio — MCP server: stdio + streamable HTTP (Faz 12)"
+description = "Local AI Studio — MCP server (stdio + streamable HTTP), REST /v1 üzerinden çalışır"
 requires-python = ">=3.11"
-dependencies = ["studio-core"]
+# Bilinçli olarak studio-core'a bağımlı DEĞİL: bu paket tek başına, Studio'nun
+# çalışmadığı bir istemci makinesine kurulup uzaktaki Studio'ya köprü olabilir.
+dependencies = ["mcp>=2.2", "httpx>=0.27"]
 
-[tool.uv.sources]
-studio-core = { workspace = true }
+[project.scripts]
+studio-mcp = "studio_mcp.main:main"
 
 [build-system]
 requires = ["hatchling"]

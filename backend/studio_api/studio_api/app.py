@@ -6,11 +6,15 @@ import asyncio
 import secrets
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from mcp.server.transport_security import TransportSecuritySettings
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 from studio_core import __version__ as core_version
 from studio_core.assets import register_asset_for_job
 from studio_core.chat import save_chat_message_for_job
@@ -21,6 +25,8 @@ from studio_core.migrations import upgrade_to_head
 from studio_core.settings_store import load_overrides
 from studio_inference.scheduler import scheduler
 from studio_inference.telemetry import TelemetryService
+from studio_mcp import StudioClient
+from studio_mcp import create_server as create_mcp_server
 from studio_models.downloader import manager as download_manager
 from studio_models.scanner import scan
 from studio_models.watcher import ModelWatcher
@@ -58,6 +64,63 @@ def _check_token(request: Request) -> None:
         raise ApiError(401, "unauthorized", "Geçersiz veya eksik API token'ı")
 
 
+class _BearerGuard:
+    """Mount edilen MCP alt uygulaması için REST ile aynı Bearer token kapısı
+    (FastAPI Depends'i Mount'a uygulanamaz, bu yüzden ASGI düzeyinde)."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        token = get_settings().api_token
+        if scope["type"] == "http" and token:
+            provided = Headers(scope=scope).get("authorization", "").removeprefix("Bearer ").strip()
+            if not secrets.compare_digest(provided, token):
+                response = JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": {
+                            "code": "unauthorized",
+                            "message": "Geçersiz veya eksik API token'ı",
+                            "detail": {},
+                        }
+                    },
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def _mount_mcp(app: FastAPI):
+    """MCP streamable HTTP transport'unu `/mcp` altına takar (Faz 12 adım 3).
+
+    Araçlar aynı süreçteki REST API'yi ASGI transport ile çağırır — ağ yok,
+    ikinci bir iş mantığı yok (docs/architecture.md "MCP-first": tek yüzey).
+    Uzak istemciler (Cursor/VS Code/özel) doğrudan http://host:port/mcp'ye Bearer
+    token ile bağlanır; Claude Desktop gibi header veremeyen istemciler için
+    `studio-mcp` stdio köprüsü var (docs/mcp.md).
+    """
+    settings = get_settings()
+    internal = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://studio.internal", timeout=None
+    )
+    studio = StudioClient(
+        "http://studio.internal",
+        settings.api_token,
+        http=internal,
+        public_base_url=f"http://{settings.host}:{settings.port}",
+    )
+    server = create_mcp_server(studio)
+    # DNS-rebinding koruması kapalı: MCP ucu REST ile AYNI token kapısının
+    # arkasında ve LAN modunda Host başlığı makine adı/IP olur.
+    mcp_app = server.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    app.mount("/mcp", _BearerGuard(mcp_app), name="mcp")
+    return server
+
+
 def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
@@ -86,6 +149,7 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(download_manager.recover)
         watcher = ModelWatcher(on_models_changed)
         watcher.start()
+
         def on_job_done(job_id: str) -> None:
             register_asset_for_job(job_id)
             save_chat_message_for_job(job_id)
@@ -100,7 +164,10 @@ def create_app() -> FastAPI:
 
         telemetry_mod.telemetry = telemetry
         try:
-            yield
+            # Mount edilen alt uygulamanın kendi lifespan'ı çalışmaz; MCP oturum
+            # yöneticisini ana lifespan içinde biz çalıştırıyoruz.
+            async with mcp_server.session_manager.run():
+                yield
         finally:
             await telemetry.stop()
             await scheduler.stop()
@@ -123,8 +190,10 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, dependencies=[Depends(_check_token)])
     app.include_router(chat_router, dependencies=[Depends(_check_token)])
     app.include_router(workflows_router, dependencies=[Depends(_check_token)])
-    # Üretim çıktıları (galeri/önizleme). Yalnız localhost'a bağlanır; LAN modu Faz 12'de.
+    # Üretim çıktıları (galeri/önizleme). LAN modunda da token'sız servis edilir:
+    # dosya adları tahmin edilemez uuid'lerdir ve UI/MCP istemcileri <img src> ile okur.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
+    mcp_server = _mount_mcp(app)
 
     app.add_middleware(
         CORSMiddleware,

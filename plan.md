@@ -823,6 +823,56 @@ Canvas render'ı için de aynı sınır geçerliydi).
 
 **DoD:** Claude Desktop, MCP üzerinden görsel üretir ve dosya yolunu döndürür; 10 satırlık SDK script'i bir video işini kuyruklar, ilerlemesini stream eder, sonucu indirir.
 
+**Durum (2026-09-18) — Adım 3 (MCP Server) ve adım 4 (tarifler) tamamlandı;
+adım 1'in LAN modu kısmı yapıldı.** Kullanıcı isteğiyle bu faz Faz 10'un
+kalanlarından önce, "proje uzaktan çalışabilir hale gelsin" hedefiyle çekildi.
+
+- `backend/studio_mcp/` dolduruldu (resmi `mcp` SDK **2.x** — `MCPServer`,
+  FastMCP adı v2'de değişti). Mimari: araçlar Studio'nun iç servislerine değil
+  **REST `/v1`'e** bağlanır (`StudioClient`, httpx) — böylece aynı kod (a) API
+  sürecine mount edilmiş streamable HTTP `/mcp` ucu olarak (ASGI transport, ağ
+  yok), (b) Claude Desktop'ın başlattığı `studio-mcp` stdio süreci olarak, (c)
+  UZAK bir makinedeki stdio köprüsü olarak (`STUDIO_API_URL`+`STUDIO_API_TOKEN`)
+  çalışır. `studio-mcp` paketi bilinçli olarak studio-core'a bağımlı değil:
+  istemci makinesine tek başına kurulabilir.
+- Araçlar: plan'daki 18'in tamamı (`generate_image/video/3d, chat,
+  transcribe_audio, synthesize_voice, remove_background, upscale, caption, ocr,
+  segment, download_model, install_model, list_models, workflow_run/create/
+  save/export`) + `edit_image`, `system_info`, `search_models`, `list_node_types`,
+  `list_workflows`, **job-id + poll** deseni (`run_job, get_job, wait_job,
+  cancel_job, list_jobs`) ve uzak istemciler için `upload_file`. Uzun işler
+  `wait=true` ile progress bildirimi akıtır; `wait=false` job_id döner.
+  Çıktılar `output_path` + `output_url` (`/outputs/...`) olarak döner;
+  `generate_image(include_image=true)` PNG'yi içerik olarak da gönderir.
+  `model_path` boşsa kurulu ilk uygun model seçilir; yoksa araç
+  search_models → download_model yolunu gösteren anlaşılır hata verir.
+  İzin ipuçları `ToolAnnotations` ile (readOnly/openWorld/destructive).
+- Güvenlik: `/mcp`, REST ile aynı Bearer token kapısının arkasında
+  (`_BearerGuard`, ASGI düzeyinde). `studio-api` loopback dışına token'sız
+  çıkmayı reddeder: token yoksa üretir, stderr'e LAN modu uyarısı basar.
+  MCP'nin DNS-rebinding koruması mount'ta kapalı (LAN'da Host = IP), koruma
+  token'la sağlanır. `settings.host/port` artık gerçek dış adresi taşır.
+- Öğrenilen: mcp 2.x'te yalnız `ToolError` mesajı istemciye ulaşır, diğer
+  istisnalar "Error executing tool X" olarak gizlenir — bu yüzden her araç bir
+  hata-çeviri sarmalayıcısıyla kaydediliyor (Studio'nun 400 mesajları, zaman
+  aşımı, "model yok" istemciye okunur biçimde gidiyor). Bare `dict` dönüş tipi
+  structured output ÜRETMİYOR, `dict[str, Any]` üretiyor. Mount edilen alt
+  uygulamanın lifespan'ı çalışmadığı için `session_manager.run()` ana
+  lifespan'a alındı.
+- Tarifler `docs/mcp.md`: Claude Desktop (stdio), Claude Code, Cursor, VS Code,
+  Windsurf, özel Python istemcisi, LAN/VPN üzerinden uzak kullanım, güvenlik notları.
+- Test: 18 yeni test (araç listesi/annotations/şema, süreç-içi `Client` ile
+  gerçek scheduler+dummy adapter üzerinden run_job/wait_job/progress,
+  okunur hata mesajları, list_models, workflow create→run→export→save
+  round-trip, /mcp HTTP el sıkışması + token kapısı, CLI arg/env, loopback
+  tespiti). `studio-mcp` stdio ile Studio kapalıyken bile başlıyor (stderr
+  uyarısı + initialize yanıtı) — canlı doğrulandı.
+- **Kalan:** adım 1'in API token yönetimi (oluştur/iptal/kapsam — şu an tek
+  token), adım 2 WS sözleşme sürümleme cilası, **adım 5 Python SDK**
+  (`localaistudio`) ve adım 6 API dokümantasyonu. DoD'nin Claude Desktop
+  maddesi teknik olarak hazır (tarif + test), gerçek Claude Desktop ile
+  uçtan uca deneme kullanıcıya bırakıldı; SDK maddesi bekliyor.
+
 ---
 
 ### FAZ 13 — Plugin SDK + Marketplace (6–8 hafta)

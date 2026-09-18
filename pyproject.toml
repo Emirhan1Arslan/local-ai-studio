@@ -12,12 +12,14 @@ members = ["backend/*", "sdk/python"]
 studio-core = { workspace = true }
 studio-api = { workspace = true }
 studio-workflows = { workspace = true }
+studio-mcp = { workspace = true }
 
 [dependency-groups]
 dev = [
     "studio-api",
     "studio-core",
     "studio-workflows",
+    "studio-mcp",
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.6",
