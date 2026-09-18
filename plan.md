@@ -294,7 +294,9 @@ seçildi, disk yeri açılınca Qwen/FLUX.2/Ideogram eklenecek.
   olayları akıyor. 7 top dokusu MCP → `imagex` worker zinciriyle üretildi —
   SDXL'in "çok sayıda küçük top" hatasını tekrarlamadı, malzeme makro çekimleri
   fotogerçekçi; iki renk hatası (su topu, futbol) prompt vurgusuyla giderildi.
-  Z-Image indirmesi yazım anında sürüyor.
+- **Canlı doğrulama (Z-Image-Turbo):** 1024² 9 adımda 3 sn (yükleme 70 sn —
+  30 GB safetensors diskten), tepe VRAM 22.2 GB (upstream'in "16 GB" iddiası
+  offload varsayıyor; `vram_estimate` 23 GB); çıktı fotogerçekçi.
 - **İndirme motoru kök neden düzeltmesi:** görevler yalnız bellekte yaşıyordu;
   API yeniden başlayınca `queued` kayıtlar sonsuza dek bekliyordu.
   `recover()` yarım kalanları kuyruğa alır (.part Range ile sürer),

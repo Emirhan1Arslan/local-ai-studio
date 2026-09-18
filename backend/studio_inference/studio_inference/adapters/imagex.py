@@ -500,5 +500,7 @@ class ImageXAdapter:
         if family == "hidream_o1":
             # 8B bf16 ≈ 16GB ağırlık + 2048² için uzun dizi aktivasyonları — profillenecek
             return 12_000 if balanced else 22_000
-        # zimage: 6B DiT bf16 ≈ 12GB + Qwen3 metin kodlayıcı (~8GB) — upstream "16GB'a sığar" diyor
-        return 9_000 if balanced else 17_000
+        # zimage: canlı ölçüldü (1024², 9 adım, bf16, offload yok) tepe VRAM 22.2 GB —
+        # 6B DiT (~12GB) + Qwen3 metin kodlayıcı (~8GB) + VAE/aktivasyon; upstream'in
+        # "16 GB'a sığar" ifadesi offload/fp8 varsayıyor.
+        return 10_000 if balanced else 23_000
