@@ -59,7 +59,7 @@ async def regenerate(asset_id: str) -> RegenerateOut:
                 return None
             params = dict(asset.meta.get("params", {}))
             kind = asset.meta.get("job_kind", asset.kind)
-            if kind == "image":
+            if kind in ("image", "imagex"):
                 settings = get_settings()
                 settings.ensure_dirs()
                 params["output_path"] = str(settings.outputs_dir / f"{uuid.uuid4().hex}.png")

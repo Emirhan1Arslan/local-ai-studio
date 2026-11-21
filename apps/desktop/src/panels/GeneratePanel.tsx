@@ -194,7 +194,16 @@ export default function GeneratePanel() {
     fetchJobs()
       .then((all) => setImageJobs(all.filter((j) => j.kind === "image" || j.kind === "imagex")))
       .catch(() => undefined);
-    fetchAssets("image").then(setAssets).catch(() => undefined);
+    // SDXL/FLUX (kind=image) ve yeni nesil aileler (kind=imagex) tek galeride birleşir.
+    Promise.all([fetchAssets("image", 24), fetchAssets("imagex", 24)])
+      .then(([a, b]) =>
+        setAssets(
+          [...a, ...b]
+            .sort((x, y) => y.created_at.localeCompare(x.created_at))
+            .slice(0, 24),
+        ),
+      )
+      .catch(() => undefined);
   };
 
   useEffect(() => {

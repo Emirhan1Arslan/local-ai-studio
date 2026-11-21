@@ -69,7 +69,7 @@ function outUrl(path: string): string {
 
 /** Bir asset'in tuvalde gösterilebilir bir görsel çıktısı var mı (üretim ya da görsel-çıktılı imgtool op'ları)? */
 function isImageAsset(a: AssetInfo): boolean {
-  if (a.kind === "image") return true;
+  if (a.kind === "image" || a.kind === "imagex") return true;
   const op = a.meta.params?.op as string | undefined;
   return a.kind === "imgtool" && !!op && IMAGE_OPS.has(op);
 }
