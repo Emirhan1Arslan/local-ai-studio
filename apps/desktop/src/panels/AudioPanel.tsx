@@ -25,6 +25,117 @@ const BARK_PRESETS: [string, string][] = [
   ["v2/ja_speaker_4", "Japonca konuşmacı 4"],
 ];
 
+/** Panoya kopyala — clipboard API yoksa/izin vermezse gizli textarea ile yedekler. */
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Uzun transkript: kartta kırpılmış, üzerine gelince tam metin pop-up'ı + tek tıkla kopyala. */
+function TranscriptCard({
+  text,
+  source,
+  model,
+  language,
+  detected,
+  onReuse,
+}: {
+  text: string;
+  source: string;
+  model: string;
+  language: string;
+  detected: string;
+  onReuse: (path: string) => void;
+}) {
+  const [copied, setCopied] = useState<"" | "ok" | "err">("");
+  const srcUrl = source ? uploadUrl(source) : null;
+  const srcName = source.split(/[\\/]/).pop() ?? "";
+  const srcLabel = srcName.includes("kayit") ? "mikrofon kaydı" : srcName.replace(/^\w{8}_/, "");
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(""), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const chars = text.length;
+  return (
+    <>
+      <div className="transcript-head">
+        {/* Hangi model + dil ile üretildiği: aynı sesin iki çıktısı arasındaki farkın
+            nereden geldiği kartta görünmüyordu (dil boşsa Whisper otomatik algılar ve
+            bu, halüsinasyonun en sık sebebi). */}
+        <span className="fmt" title={`model: ${model || "bilinmiyor"}`}>
+          {model || "transkript"}
+        </span>
+        <span
+          className={language ? "fmt" : "fmt transcript-auto"}
+          title={
+            language
+              ? "dil elle verildi"
+              : `dil verilmedi — Whisper otomatik algıladı${detected ? `: ${detected}` : ""}`
+          }
+        >
+          {language ? `dil: ${language}` : `dil: otomatik${detected ? ` → ${detected}` : ""}`}
+        </span>
+        {chars > 0 && (
+          <>
+            <span className="muted transcript-len">{chars.toLocaleString("tr-TR")} karakter</span>
+            <button
+              type="button"
+              className="transcript-copy"
+              title="Tüm metni panoya kopyala"
+              onClick={() => copyText(text).then((ok) => setCopied(ok ? "ok" : "err"))}
+            >
+              {copied === "ok" ? "✓ kopyalandı" : copied === "err" ? "kopyalanamadı" : "⧉ kopyala"}
+            </button>
+          </>
+        )}
+      </div>
+      {srcUrl && <audio controls preload="none" src={srcUrl} />}
+      {source && (
+        <div className="transcript-src-row">
+          <span className="muted transcript-src" title={source}>
+            kaynak: {srcUrl ? srcLabel : `${srcName} (uygulama dışı yol — çalınamıyor)`}
+          </span>
+          <button
+            type="button"
+            className="transcript-copy"
+            title="Bu sesi yeniden transkribe etmek için giriş olarak seç"
+            onClick={() => onReuse(source)}
+          >
+            ⤴ tekrar kullan
+          </button>
+        </div>
+      )}
+      <div className="transcript-hover">
+        <p>{text.slice(0, 300) || "(boş transkript)"}</p>
+        {chars > 300 && (
+          <div className="transcript-popup" role="tooltip">
+            {text}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 const VOICES: [string, string][] = [
   ["af_heart", "Heart (kadın, A. İngilizcesi)"],
   ["af_bella", "Bella (kadın, A. İngilizcesi)"],
@@ -79,6 +190,23 @@ function outUrl(path: string): string {
   return apiUrl(`/outputs/${path.split(/[\\/]/).pop()}`);
 }
 
+/** Bir STT işinin kullandığı modelin okunur adı. model_path bir ağırlık dosyasını
+ * gösterir (ör. .../whisper-…-ct2/model.bin), adapter üst klasörü kullanır — etikette
+ * de o klasör adı anlamlı olan. Model seçilmemişse preset boyutu (base/large-v3). */
+function sttModelLabel(params: Record<string, unknown> | undefined): string {
+  const mp = String(params?.model_path ?? "");
+  if (mp) return mp.split(/[\\/]/).slice(-2, -1)[0] ?? mp;
+  const size = String(params?.model_size ?? "");
+  return size ? `preset: ${size}` : "";
+}
+
+/** Transkripsiyonun kaynak sesi (mikrofon kaydı / yüklenen dosya) uploads/ altındaysa
+ * çalınabilir URL'i, değilse null (ör. toplu klasör işi keyfi bir yoldan okur). */
+function uploadUrl(path: string): string | null {
+  if (!/[\\/]uploads[\\/]/.test(path)) return null;
+  return apiUrl(`/uploads/${encodeURIComponent(path.split(/[\\/]/).pop() ?? "")}`);
+}
+
 export default function AudioPanel() {
   const { events, connected } = useStudio();
   const [mode, setMode] = useState<Mode>("stt");
@@ -92,6 +220,7 @@ export default function AudioPanel() {
   const [wordTimestamps, setWordTimestamps] = useState(true);
   const [batchDir, setBatchDir] = useState("");
   const [recording, setRecording] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunks = useRef<Blob[]>([]);
 
@@ -182,6 +311,17 @@ export default function AudioPanel() {
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  /** Geçmiş bir transkriptin kaynak sesini yeniden giriş yap (ör. daha iyi bir modelle
+   * tekrar çevirmek için). Toplu klasör alanı doluysa o öncelikli olduğundan temizlenir. */
+  const reuseSource = (path: string) => {
+    setFormError("");
+    setMode("stt");
+    setBatchDir("");
+    const name = path.split(/[\\/]/).pop() ?? "ses";
+    setAudioFile({ path, name: name.includes("kayit") ? "mikrofon kaydı" : name });
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const startRecording = async () => {
@@ -294,7 +434,7 @@ export default function AudioPanel() {
 
   return (
     <div className="panel-body">
-      <form className="dl-form" onSubmit={run}>
+      <form className="dl-form" ref={formRef} onSubmit={run}>
         <div className="mode-tabs">
           <button type="button" className={mode === "stt" ? "active" : ""} onClick={() => setMode("stt")}>
             transkripsiyon
@@ -621,10 +761,14 @@ export default function AudioPanel() {
                   <p className="muted">"{String(a.meta.params?.text ?? "").slice(0, 120)}"</p>
                 </>
               ) : (
-                <>
-                  <span className="fmt">transkript</span>
-                  <p title={transcript}>{transcript.slice(0, 300) || "(boş transkript)"}</p>
-                </>
+                <TranscriptCard
+                  text={transcript}
+                  source={String(a.meta.result?.source ?? a.meta.params?.audio_path ?? "")}
+                  model={sttModelLabel(a.meta.params)}
+                  language={String(a.meta.params?.language ?? "")}
+                  detected={String(a.meta.result?.language ?? "")}
+                  onReuse={reuseSource}
+                />
               )}
             </div>
           );

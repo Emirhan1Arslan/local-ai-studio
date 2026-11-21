@@ -47,6 +47,19 @@ def test_upload_rejects_invalid_base64(client):
     assert r.status_code == 400
 
 
+def test_uploads_served_statically(client):
+    """Transkript kartı kaynak kaydı yeniden çalabilsin diye uploads/ statik sunulur."""
+    r = client.post(
+        "/v1/uploads", json={"filename": "kayit.webm", "data_base64": _b64(b"sahte-ses-verisi")}
+    )
+    assert r.status_code == 200
+    name = Path(r.json()["path"]).name
+
+    got = client.get(f"/uploads/{name}")
+    assert got.status_code == 200
+    assert got.content == b"sahte-ses-verisi"
+
+
 def test_upload_accepts_audio_extensions(client):
     for ext in ("wav", "mp3", "webm", "m4a", "flac", "ogg"):
         r = client.post(

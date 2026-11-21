@@ -291,6 +291,41 @@ table.models th { color: var(--muted); font-weight: 600; }
 }
 .audio-result-card audio { width: 100%; height: 32px; }
 .audio-result-card p { margin: 0; font-size: 12px; color: var(--text); }
+
+/* Transkript kartı: başlık satırı + kopyala, üzerine gelince tam metin pop-up'ı */
+.transcript-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Dil elle verilmediğinde dikkat çeksin — otomatik algılama hatalı çıktının baş sebebi */
+.transcript-auto { color: var(--err); border-color: var(--err); }
+.transcript-len { font-size: 11px; margin-left: auto; white-space: nowrap; }
+.transcript-copy {
+  flex: 0 0 auto; background: var(--panel); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 2px 8px; font-family: inherit; font-size: 11px; cursor: pointer;
+}
+.transcript-copy:hover { color: var(--accent); border-color: var(--accent); }
+.transcript-src-row { display: flex; align-items: center; gap: 6px; }
+.transcript-src {
+  font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0;
+}
+.transcript-hover { position: relative; }
+.transcript-popup {
+  position: absolute; z-index: 30; left: 0; top: 100%;
+  width: 100%; max-height: 320px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; font-size: 12px; line-height: 1.5; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  /* Kapanış 0.5 sn gecikir → fare pop-up'a ulaşabilir; visibility:hidden iken
+     tıklamaları da yutmaz. Açılışta gecikme yok. */
+  opacity: 0; visibility: hidden;
+  transition: opacity 140ms ease 500ms, visibility 0s linear 640ms;
+}
+.transcript-hover:hover .transcript-popup,
+.transcript-popup:hover {
+  opacity: 1; visibility: visible;
+  transition: opacity 120ms ease 0s, visibility 0s linear 0s;
+}
 .hf-file-row button {
   background: var(--panel); color: var(--text); border: 1px solid var(--border);
   border-radius: 5px; padding: 2px 8px; cursor: pointer; font-family: inherit; font-size: 11px;

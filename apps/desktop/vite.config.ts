@@ -16,6 +16,13 @@ export default defineConfig({
         target: "http://127.0.0.1:8710",
         changeOrigin: true,
       },
+      // Kaynak dosyalar (mikrofon kaydı / yüklenen ses): transkript kartındaki
+      // oynatıcı buradan okur. Eksikse istek vite'ın SPA fallback'ine düşer ve
+      // ses yerine index.html döner — oynatıcı görünür ama çalmaz.
+      "/uploads": {
+        target: "http://127.0.0.1:8710",
+        changeOrigin: true,
+      },
     },
   },
 });

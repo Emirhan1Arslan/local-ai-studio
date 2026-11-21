@@ -197,6 +197,9 @@ def create_app() -> FastAPI:
     # Üretim çıktıları (galeri/önizleme). LAN modunda da token'sız servis edilir:
     # dosya adları tahmin edilemez uuid'lerdir ve UI/MCP istemcileri <img src> ile okur.
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
+    # Kaynak dosyalar (mikrofon kaydı / yüklenen ses-görsel-video): transkript kartında
+    # kaydı yeniden dinleyebilmek için. Aynı gerekçe: ad öneki tahmin edilemez uuid.
+    app.mount("/uploads", StaticFiles(directory=settings.uploads_dir), name="uploads")
     mcp_server = _mount_mcp(app)
 
     app.add_middleware(
