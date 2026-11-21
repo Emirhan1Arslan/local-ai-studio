@@ -30,6 +30,34 @@ export const SUBDIRS = [
   "face_restoration",
 ];
 
+/** Repo adı/URL'den hedef klasörü tahmin et. Varsayılan "llm" olduğu için ses/görüntü
+ * modelleri sessizce yanlış klasöre iniyordu (ör. Whisper → llm/), oradan da ilgili
+ * panelin model seçicisinde hiç görünmüyorlardı. Sıra önemli: ilk eşleşen kazanır. */
+const SUBDIR_HINTS: [RegExp, string][] = [
+  [/whisper|wav2vec|\bstt\b|\basr\b|speech[-_]?to[-_]?text/i, "stt"],
+  [/kokoro|xtts|\bbark\b|piper|speecht5|\bvits\b|\btts\b|text[-_]?to[-_]?speech/i, "tts"],
+  [/esrgan|swinir|upscal|\bsuper[-_]?resolution\b/i, "upscale"],
+  [/birefnet|rembg|u2net|isnet|background[-_]?removal/i, "background_removal"],
+  [/gfpgan|codeformer|restoreformer/i, "face_restoration"],
+  [/segment[-_]?anything|\bsam2?\b|\bmask\b/i, "segmentation"],
+  [/florence|\bblip\b|caption/i, "captioning"],
+  [/\bocr\b|trocr|paddleocr|\bgot[-_]?ocr\b/i, "ocr"],
+  [/controlnet/i, "controlnet"],
+  [/trellis|triposr|instantmesh|hunyuan3d|openlrm|\b3d\b/i, "3d"],
+  [/\bwan\b|hunyuanvideo|\bltx\b|mochi|cogvideo|stable[-_]?video|text[-_]?to[-_]?video/i, "video"],
+  [/\blora\b/i, "lora"],
+  [/\bvae\b/i, "vae"],
+  [/embedding|\bbge\b|\be5[-_]|sentence[-_]?transformers/i, "embeddings"],
+  [/flux|sdxl|stable[-_]?diffusion|z[-_]?image|hidream|playground|pixart/i, "checkpoints"],
+];
+
+export function guessSubdir(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  for (const [re, dir] of SUBDIR_HINTS) if (re.test(t)) return dir;
+  return null;
+}
+
 export function fmtBytes(n: number): string {
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
@@ -76,6 +104,8 @@ export default function DownloadsPanel() {
   const [filename, setFilename] = useState("");
   const [snapshot, setSnapshot] = useState(false);
   const [subdir, setSubdir] = useState("llm");
+  // Kullanıcı seçiciye bir kez dokunduysa tahmin artık üzerine yazmaz.
+  const [subdirTouched, setSubdirTouched] = useState(false);
   const [sha, setSha] = useState("");
   const [formError, setFormError] = useState("");
   const [formStatus, setFormStatus] = useState("");
@@ -89,6 +119,13 @@ export default function DownloadsPanel() {
   const speedDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = () => fetchDownloads().then(setRows).catch(() => setRows([]));
+
+  // Repo adı/URL yazıldıkça hedef klasörü tahmin et (kullanıcı seçiciye dokunmadıysa).
+  const guessed = guessSubdir(mode === "hf" ? repoId : url);
+  useEffect(() => {
+    if (!subdirTouched && guessed && guessed !== subdir) setSubdir(guessed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guessed, subdirTouched]);
 
   useEffect(() => {
     if (!connected) return;
@@ -225,11 +262,20 @@ export default function DownloadsPanel() {
             <input type="radio" checked={mode === "hf"} onChange={() => setMode("hf")} /> Hugging
             Face
           </label>
-          <select value={subdir} onChange={(e) => setSubdir(e.target.value)}>
+          <select
+            value={subdir}
+            onChange={(e) => {
+              setSubdirTouched(true);
+              setSubdir(e.target.value);
+            }}
+          >
             {SUBDIRS.map((s) => (
               <option key={s}>{s}</option>
             ))}
           </select>
+          {guessed && !subdirTouched && (
+            <span className="muted">↑ repo adına göre seçildi</span>
+          )}
         </div>
         {mode === "url" ? (
           <input
